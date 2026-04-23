@@ -1,26 +1,35 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
+import { Login, type Role } from "@/components/Login";
+import { StudentDashboard } from "@/components/student/StudentDashboard";
+import { FacultyDashboard } from "@/components/faculty/FacultyDashboard";
+import { AdminDashboard } from "@/components/admin/AdminDashboard";
+import { ToastHost } from "@/components/Toast";
 
 export const Route = createFileRoute("/")({
+  head: () => ({
+    meta: [
+      { title: "D-Term — Definition & Terminology Assessment Platform" },
+      {
+        name: "description",
+        content:
+          "D-Term is a serious dark-academic exam platform for Definition & Terminology tests in college courses.",
+      },
+    ],
+  }),
   component: Index,
 });
 
-// IMPORTANT: Replace this placeholder. For sites with multiple pages (About, Services, Contact, etc.),
-// create separate route files (about.tsx, services.tsx, contact.tsx) — don't put all pages in this file.
-function PlaceholderIndex() {
-  return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
-    </div>
-  );
-}
-
 function Index() {
-  return <PlaceholderIndex />;
+  const [role, setRole] = useState<Role | null>(null);
+
+  return (
+    <>
+      {role === null && <Login onLogin={setRole} />}
+      {role === "Student" && <StudentDashboard onLogout={() => setRole(null)} />}
+      {role === "Faculty" && <FacultyDashboard onLogout={() => setRole(null)} />}
+      {role === "Admin" && <AdminDashboard onLogout={() => setRole(null)} />}
+      <ToastHost />
+    </>
+  );
 }
