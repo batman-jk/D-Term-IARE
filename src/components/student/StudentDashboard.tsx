@@ -7,6 +7,7 @@ import { Flashcard } from "./Flashcard";
 import { PracticeTest } from "./PracticeTest";
 import { ExamMode, type ExamResult } from "./ExamMode";
 import { getDtLaunched, subscribeDt } from "@/utils/examStore";
+import { questionStore } from "@/utils/questionStore";
 
 const NAV = [
   { key: "home", label: "Home", icon: Home },
@@ -118,9 +119,10 @@ function Stat({ label, value }: { label: string; value: string }) {
 function StudyTab() {
   const [subject, setSubject] = useState(SUBJECTS[0]);
   const [module, setModule] = useState<number | null>(null);
+  const questions = useSyncExternalStore(questionStore.subscribe, questionStore.getQuestions, questionStore.getQuestions);
 
   if (module !== null) {
-    const cards = QUESTIONS.filter((q) => q.module === module);
+    const cards = questions.filter((q) => q.module === module);
     return (
       <Flashcard
         cards={cards}
@@ -157,7 +159,7 @@ function StudyTab() {
             <Layers className="w-6 h-6 text-primary mb-3" />
             <div className="font-mono text-lg text-foreground">Module {m}</div>
             <div className="text-xs text-muted-foreground mt-1">
-              {QUESTIONS.filter((q) => q.module === m).length} flashcards
+              {questions.filter((q) => q.module === m).length} flashcards
             </div>
             <div className="text-xs text-primary mt-3 font-mono opacity-0 group-hover:opacity-100 transition-opacity">
               Open →
@@ -170,14 +172,15 @@ function StudyTab() {
 }
 
 function ExamTab({ dtLaunched }: { dtLaunched: boolean }) {
+  const storeQuestions = useSyncExternalStore(questionStore.subscribe, questionStore.getQuestions, questionStore.getQuestions);
   const [stage, setStage] = useState<"idle" | "exam" | "done">("idle");
   const [results, setResults] = useState<ExamResult[]>([]);
-  const [questions, setQuestions] = useState(QUESTIONS.slice(0, 10));
+  const [questions, setQuestions] = useState(storeQuestions.slice(0, 10));
 
   // Build 10 questions: 2 from each module
   const buildExam = () => {
     const picked = [1, 2, 3, 4, 5].flatMap((m) =>
-      shuffle(QUESTIONS.filter((q) => q.module === m)).slice(0, 2),
+      shuffle(storeQuestions.filter((q) => q.module === m)).slice(0, 2),
     );
     setQuestions(shuffle(picked));
     setStage("exam");

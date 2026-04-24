@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
+import * as XLSX from "xlsx";
+import { toast } from "sonner";
+import { questionStore } from "@/utils/questionStore";
 import { Home, Upload, FileText, Trophy, FileUp } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import {
@@ -64,30 +67,93 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function UploadTab() {
   const [files, setFiles] = useState(MOCK_RESOURCES);
-  const onMockUpload = () => {
-    setFiles((prev) => [
-      {
-        filename: `New_Notes_${prev.length + 1}.pdf`,
-        subject: SUBJECTS[prev.length % SUBJECTS.length],
-        date: new Date().toISOString().slice(0, 10),
-      },
-      ...prev,
-    ]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        console.log("File loaded, starting to parse...");
+        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const wb = XLSX.read(data, { type: 'array' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        
+        // Convert to array of arrays first to make header case-insensitive
+        const jsonData = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
+        console.log("Parsed JSON Data:", jsonData);
+        
+        const newQuestions = jsonData.map((row) => {
+          // Normalize keys to lowercase for robust matching
+          const normalizedRow: Record<string, any> = {};
+          for (const key in row) {
+            normalizedRow[key.toLowerCase().trim()] = row[key];
+          }
+
+          return {
+            module: Number(normalizedRow.module) || 1,
+            question: normalizedRow.question || '',
+            answer: normalizedRow.answer || '',
+            keywords: typeof normalizedRow.keywords === 'string' 
+              ? normalizedRow.keywords.split(',').map((k: string) => k.trim()) 
+              : [],
+          };
+        }).filter(q => q.question && q.answer);
+
+        console.log("Extracted Questions:", newQuestions);
+
+        if (newQuestions.length > 0) {
+          questionStore.addQuestions(newQuestions);
+          toast.success(`Successfully extracted ${newQuestions.length} questions from ${file.name}!`);
+          setFiles((prev) => [
+            {
+              filename: file.name,
+              subject: "Imported Data",
+              date: new Date().toISOString().slice(0, 10),
+            },
+            ...prev,
+          ]);
+        } else {
+          console.warn("No valid questions found. Ensure columns are named 'module', 'question', 'answer', 'keywords'.");
+          toast.error("No valid questions found in the file. Check column headers.");
+        }
+      } catch (err) {
+        console.error("Error parsing file:", err);
+        toast.error("Failed to parse file.");
+      }
+      
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    };
+    reader.readAsArrayBuffer(file);
   };
+
   return (
     <div>
       <h1 className="font-mono text-3xl text-foreground">Upload Resources</h1>
       <p className="text-sm text-muted-foreground mt-1 mb-6">
-        Drop PDFs, slides, or notes for your students.
+        Drop PDFs, slides, or questions (.csv, .xlsx) for your students.
       </p>
 
+      <input 
+        type="file" 
+        accept=".csv, .xlsx" 
+        className="hidden" 
+        ref={fileInputRef} 
+        onChange={handleFileUpload} 
+      />
+
       <button
-        onClick={onMockUpload}
-        className="w-full max-w-3xl border-2 border-dashed border-border rounded p-12 text-center hover:border-primary transition-colors mb-6"
+        onClick={() => fileInputRef.current?.click()}
+        className="w-full max-w-3xl border-2 border-dashed border-border rounded p-12 text-center hover:border-primary transition-colors mb-6 cursor-pointer"
       >
         <FileUp className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
-        <div className="text-foreground font-mono">Click to upload (mock)</div>
-        <div className="text-xs text-muted-foreground mt-1">PDF · DOCX · PPTX up to 50MB</div>
+        <div className="text-foreground font-mono">Click to upload Questions (.csv, .xlsx)</div>
+        <div className="text-xs text-muted-foreground mt-1">Extracts questions automatically to student flashcards</div>
       </button>
 
       <div className="border border-border bg-card rounded overflow-hidden max-w-3xl">
