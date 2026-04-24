@@ -1,20 +1,30 @@
-import { useState } from "react";
-import { QUESTIONS, SUBJECTS } from "@/utils/mockData";
+import { useState, useSyncExternalStore } from "react";
+import { SUBJECTS } from "@/utils/mockData";
 import { shuffle } from "@/utils/shuffle";
 import { ExamMode, type ExamResult } from "./ExamMode";
+import { questionStore } from "@/utils/questionStore";
 
 type Mode = "config" | "exam" | "results";
 
 export function PracticeTest() {
   const [mode, setMode] = useState<Mode>("config");
-  const [subject, setSubject] = useState(SUBJECTS[0]);
-  const [module, setModule] = useState<number | "all">("all");
+  const storeQuestions = useSyncExternalStore(questionStore.subscribe, questionStore.getQuestions, questionStore.getQuestions);
+  
+  const subjects = Array.from(new Set(storeQuestions.map(q => q.subject || "General"))).filter(Boolean);
+  const [subject, setSubject] = useState(subjects[0] || "General");
+  const [module, setModule] = useState<number | string | "all">("all");
   const [duration, setDuration] = useState(10);
-  const [questions, setQuestions] = useState(QUESTIONS.slice(0, 10));
+  const [questions, setQuestions] = useState(storeQuestions.slice(0, 10));
   const [results, setResults] = useState<ExamResult[]>([]);
 
+  const subjectQuestions = storeQuestions.filter(q => (q.subject || "General") === subject);
+  const availableModules = Array.from(new Set(subjectQuestions.map(q => q.module))).sort((a, b) => {
+    if (typeof a === 'number' && typeof b === 'number') return a - b;
+    return String(a).localeCompare(String(b));
+  });
+
   const start = () => {
-    const pool = module === "all" ? QUESTIONS : QUESTIONS.filter((q) => q.module === module);
+    const pool = module === "all" ? subjectQuestions : subjectQuestions.filter((q) => q.module === module);
     const picked = shuffle(pool).slice(0, 10);
     setQuestions(picked);
     setMode("exam");
@@ -96,8 +106,8 @@ export function PracticeTest() {
               onChange={(e) => setSubject(e.target.value)}
               className="w-full bg-input border border-border rounded px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
             >
-              {SUBJECTS.map((s) => (
-                <option key={s}>{s}</option>
+              {subjects.map((s) => (
+                <option key={s} value={s}>{s}</option>
               ))}
             </select>
           </div>
@@ -109,14 +119,14 @@ export function PracticeTest() {
             <select
               value={module}
               onChange={(e) =>
-                setModule(e.target.value === "all" ? "all" : Number(e.target.value))
+                setModule(e.target.value === "all" ? "all" : e.target.value)
               }
               className="w-full bg-input border border-border rounded px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
             >
               <option value="all">All Modules</option>
-              {[1, 2, 3, 4, 5].map((m) => (
-                <option key={m} value={m}>
-                  Module {m}
+              {availableModules.map((m) => (
+                <option key={String(m)} value={String(m)}>
+                  {typeof m === "number" ? `Module ${m}` : String(m)}
                 </option>
               ))}
             </select>

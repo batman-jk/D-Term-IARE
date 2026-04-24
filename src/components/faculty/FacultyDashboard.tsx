@@ -94,7 +94,8 @@ function UploadTab() {
           }
 
           return {
-            module: Number(normalizedRow.module) || 1,
+            module: normalizedRow.module || normalizedRow.modulename || normalizedRow.module_name || 1,
+            subject: normalizedRow.subject || wsname || 'Imported Data',
             question: normalizedRow.question || '',
             answer: normalizedRow.answer || '',
             keywords: typeof normalizedRow.keywords === 'string' 
@@ -181,13 +182,22 @@ function UploadTab() {
 }
 
 function ConductTab() {
-  const [subject, setSubject] = useState(SUBJECTS[0]);
-  const [modules, setModules] = useState<number[]>([1]);
+  const storeQuestions = questionStore.getQuestions();
+  const subjects = Array.from(new Set(storeQuestions.map(q => q.subject || "General"))).filter(Boolean);
+  
+  const [subject, setSubject] = useState(subjects[0] || "General");
+  const [modules, setModules] = useState<Array<number | string>>([]);
   const [duration, setDuration] = useState(15);
   const [code, setCode] = useState<string | null>(null);
 
-  const toggle = (m: number) =>
+  const toggle = (m: number | string) =>
     setModules((prev) => (prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]));
+
+  const subjectQuestions = storeQuestions.filter(q => (q.subject || "General") === subject);
+  const availableModules = Array.from(new Set(subjectQuestions.map(q => q.module))).sort((a, b) => {
+    if (typeof a === 'number' && typeof b === 'number') return a - b;
+    return String(a).localeCompare(String(b));
+  });
 
   const launch = () => {
     const c = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -211,9 +221,11 @@ function ConductTab() {
             onChange={(e) => setSubject(e.target.value)}
             className="w-full bg-input border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-primary"
           >
-            {SUBJECTS.map((s) => (
-              <option key={s}>{s}</option>
-            ))}
+            {subjects.length > 0 ? subjects.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            )) : (
+              <option value="General">General</option>
+            )}
           </select>
         </div>
 
@@ -222,9 +234,9 @@ function ConductTab() {
             Modules
           </label>
           <div className="flex gap-2 flex-wrap">
-            {[1, 2, 3, 4, 5].map((m) => (
+            {availableModules.length > 0 ? availableModules.map((m) => (
               <button
-                key={m}
+                key={String(m)}
                 onClick={() => toggle(m)}
                 className={`px-3 py-1.5 text-sm rounded border font-mono ${
                   modules.includes(m)
@@ -232,9 +244,11 @@ function ConductTab() {
                     : "border-border text-muted-foreground hover:border-muted-foreground"
                 }`}
               >
-                M{m}
+                {typeof m === "number" ? `M${m}` : String(m)}
               </button>
-            ))}
+            )) : (
+              <div className="text-sm text-muted-foreground italic">No modules available</div>
+            )}
           </div>
         </div>
 

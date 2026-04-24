@@ -1,58 +1,15 @@
 export interface Question {
   id: string;
-  module: number;
+  module: number | string;
+  subject?: string;
   question: string;
   answer: string;
   keywords: string[];
 }
 
-const BASE: Omit<Question, "id" | "module">[] = [
-  {
-    question: "What is a protocol?",
-    answer: "A set of rules that govern data communication between devices",
-    keywords: ["rules", "govern", "data", "communication", "devices"],
-  },
-  {
-    question: "What is bandwidth?",
-    answer: "The maximum rate of data transfer across a network path",
-    keywords: ["maximum", "rate", "data", "transfer", "network"],
-  },
-  {
-    question: "What is latency?",
-    answer: "The time delay between sending and receiving data",
-    keywords: ["time", "delay", "sending", "receiving", "data"],
-  },
-  {
-    question: "What is a router?",
-    answer: "A device that forwards data packets between computer networks",
-    keywords: ["device", "forwards", "packets", "computer", "networks"],
-  },
-  {
-    question: "What is DNS?",
-    answer: "Domain Name System that translates domain names to IP addresses",
-    keywords: ["domain", "name", "system", "translates", "IP", "addresses"],
-  },
-];
+export const QUESTIONS: Question[] = [];
 
-// Build 6 questions per module across 5 modules = 30 cards
-export const QUESTIONS: Question[] = (() => {
-  const out: Question[] = [];
-  for (let m = 1; m <= 5; m++) {
-    for (let i = 0; i < 6; i++) {
-      const base = BASE[i % BASE.length];
-      out.push({
-        id: `m${m}-q${i + 1}`,
-        module: m,
-        question: base.question,
-        answer: base.answer,
-        keywords: base.keywords,
-      });
-    }
-  }
-  return out;
-})();
-
-export const SUBJECTS = ["Computer Networks", "DBMS", "OS"];
+export const SUBJECTS: string[] = []; // Removed mock subjects
 
 export const MOCK_USERS = [
   { id: 1, name: "Arjun Mehta", email: "arjun@college.edu", role: "Student" },

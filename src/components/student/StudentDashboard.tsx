@@ -117,12 +117,32 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 function StudyTab() {
-  const [subject, setSubject] = useState(SUBJECTS[0]);
-  const [module, setModule] = useState<number | null>(null);
   const questions = useSyncExternalStore(questionStore.subscribe, questionStore.getQuestions, questionStore.getQuestions);
 
+  if (questions.length === 0) {
+    return (
+      <Section title="Study" subtitle="Flip through definitions module by module">
+        <div className="flex flex-col items-center justify-center py-20 text-center text-muted-foreground border border-dashed border-border rounded max-w-3xl">
+          <BookOpen className="w-10 h-10 mb-4" />
+          <h2 className="font-mono text-xl text-foreground mb-2">No Resources Available</h2>
+          <p className="text-sm">Study resources have not been uploaded by the faculty yet.</p>
+        </div>
+      </Section>
+    );
+  }
+
+  const subjects = Array.from(new Set(questions.map(q => q.subject || "General"))).filter(Boolean);
+  const [subject, setSubject] = useState(subjects[0] || "General");
+  const [module, setModule] = useState<number | string | null>(null);
+
+  const subjectQuestions = questions.filter(q => (q.subject || "General") === subject);
+  const availableModules = Array.from(new Set(subjectQuestions.map((q) => q.module))).sort((a, b) => {
+    if (typeof a === 'number' && typeof b === 'number') return a - b;
+    return String(a).localeCompare(String(b));
+  });
+
   if (module !== null) {
-    const cards = questions.filter((q) => q.module === module);
+    const cards = subjectQuestions.filter((q) => q.module === module);
     return (
       <Flashcard
         cards={cards}
@@ -143,23 +163,25 @@ function StudyTab() {
           onChange={(e) => setSubject(e.target.value)}
           className="w-full bg-input border border-border rounded px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
         >
-          {SUBJECTS.map((s) => (
-            <option key={s}>{s}</option>
+          {subjects.map((s) => (
+            <option key={s} value={s}>{s}</option>
           ))}
         </select>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {[1, 2, 3, 4, 5].map((m) => (
+        {availableModules.map((m) => (
           <button
-            key={m}
+            key={String(m)}
             onClick={() => setModule(m)}
             className="border border-border bg-card rounded p-5 text-left hover:border-primary transition-colors group"
           >
             <Layers className="w-6 h-6 text-primary mb-3" />
-            <div className="font-mono text-lg text-foreground">Module {m}</div>
+            <div className="font-mono text-lg text-foreground">
+              {typeof m === "number" ? `Module ${m}` : String(m)}
+            </div>
             <div className="text-xs text-muted-foreground mt-1">
-              {questions.filter((q) => q.module === m).length} flashcards
+              {subjectQuestions.filter((q) => q.module === m).length} flashcards
             </div>
             <div className="text-xs text-primary mt-3 font-mono opacity-0 group-hover:opacity-100 transition-opacity">
               Open →
@@ -173,13 +195,17 @@ function StudyTab() {
 
 function ExamTab({ dtLaunched }: { dtLaunched: boolean }) {
   const storeQuestions = useSyncExternalStore(questionStore.subscribe, questionStore.getQuestions, questionStore.getQuestions);
+  const availableModules = Array.from(new Set(storeQuestions.map((q) => q.module))).sort((a, b) => {
+    if (typeof a === 'number' && typeof b === 'number') return a - b;
+    return String(a).localeCompare(String(b));
+  });
   const [stage, setStage] = useState<"idle" | "exam" | "done">("idle");
   const [results, setResults] = useState<ExamResult[]>([]);
   const [questions, setQuestions] = useState(storeQuestions.slice(0, 10));
 
-  // Build 10 questions: 2 from each module
+  // Build exam: pick up to 2 from each available module
   const buildExam = () => {
-    const picked = [1, 2, 3, 4, 5].flatMap((m) =>
+    const picked = availableModules.flatMap((m) =>
       shuffle(storeQuestions.filter((q) => q.module === m)).slice(0, 2),
     );
     setQuestions(shuffle(picked));
