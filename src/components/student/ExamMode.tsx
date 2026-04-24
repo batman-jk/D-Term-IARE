@@ -26,20 +26,38 @@ export function ExamMode({
   const [answers, setAnswers] = useState<string[]>(() => questions.map(() => ""));
   const [warning, setWarning] = useState(false);
   const [countdown, setCountdown] = useState(5);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const submittedRef = useRef(false);
 
-  const submit = () => {
+  const submit = async () => {
     if (submittedRef.current) return;
     submittedRef.current = true;
-    const results: ExamResult[] = questions.map((q, i) => ({
-      question: q.question,
-      correct: q.answer,
-      given: answers[i] || "",
-      match: evaluateAnswer(answers[i] || "", q.answer),
-    }));
-    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-    onFinish(results);
+    setIsSubmitting(true);
+    try {
+      const results: ExamResult[] = await Promise.all(
+        questions.map(async (q, i) => ({
+          question: q.question,
+          correct: q.answer,
+          given: answers[i] || "",
+          match: await evaluateAnswer(answers[i] || "", q.answer),
+        }))
+      );
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      onFinish(results);
+    } catch (e) {
+      console.error(e);
+      const fallbackResults: ExamResult[] = questions.map((q, i) => ({
+        question: q.question,
+        correct: q.answer,
+        given: answers[i] || "",
+        match: 0,
+      }));
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      onFinish(fallbackResults);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Enter fullscreen + key blocking
@@ -185,7 +203,16 @@ export function ExamMode({
         </div>
       </div>
 
-      {warning && (
+      {isSubmitting && (
+        <div className="absolute inset-0 bg-background/95 z-[60] flex flex-col items-center justify-center">
+          <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin mb-4"></div>
+          <div className="font-mono text-lg text-foreground animate-pulse">
+            Evaluating answers via Gemini...
+          </div>
+        </div>
+      )}
+
+      {warning && !isSubmitting && (
         <div className="absolute inset-0 bg-background/95 z-50 flex items-center justify-center">
           <div className="border-2 border-destructive bg-card p-8 rounded max-w-md text-center">
             <AlertTriangle className="w-12 h-12 text-destructive mx-auto mb-4" />
