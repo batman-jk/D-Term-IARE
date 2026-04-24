@@ -11,6 +11,12 @@ export interface ExamResult {
   match: number;
 }
 
+export interface ExamFinishMeta {
+  startedAt: number;
+  endedAt: number;
+  questionsAttempted: number;
+}
+
 export function ExamMode({
   questions,
   title,
@@ -19,9 +25,10 @@ export function ExamMode({
 }: {
   questions: Question[];
   title: string;
-  onFinish: (results: ExamResult[]) => void;
+  onFinish: (results: ExamResult[], meta: ExamFinishMeta) => void;
   onCancel: () => void;
 }) {
+  const startedAtRef = useRef<number>(Date.now());
   const [idx, setIdx] = useState(0);
   const [answers, setAnswers] = useState<string[]>(() => questions.map(() => ""));
   const [warning, setWarning] = useState(false);
@@ -34,6 +41,7 @@ export function ExamMode({
     if (submittedRef.current) return;
     submittedRef.current = true;
     setIsSubmitting(true);
+    const endedAt = Date.now();
     try {
       const results: ExamResult[] = await Promise.all(
         questions.map(async (q, i) => ({
@@ -44,7 +52,8 @@ export function ExamMode({
         }))
       );
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-      onFinish(results);
+      const attempted = answers.filter(a => a.trim() !== "").length;
+      onFinish(results, { startedAt: startedAtRef.current, endedAt, questionsAttempted: attempted });
     } catch (e) {
       console.error(e);
       const fallbackResults: ExamResult[] = questions.map((q, i) => ({
@@ -54,22 +63,15 @@ export function ExamMode({
         match: 0,
       }));
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-      onFinish(fallbackResults);
+      const fallbackAttempted = answers.filter(a => a.trim() !== "").length;
+      onFinish(fallbackResults, { startedAt: startedAtRef.current, endedAt, questionsAttempted: fallbackAttempted });
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // Enter fullscreen + key blocking
-  useEffect(() => {
-    const el = containerRef.current;
-    if (el?.requestFullscreen) {
-      el.requestFullscreen().catch(() => {
-        showToast("Fullscreen unavailable in this preview");
-      });
-    }
-
-    const blocked = (e: KeyboardEvent) => {
+  // Key blocking
+  useEffect(() => {    const blocked = (e: KeyboardEvent) => {
       const k = e.key;
       const isCombo =
         e.ctrlKey && (k === "c" || k === "v" || k === "a" || k === "C" || k === "V" || k === "A");
@@ -118,6 +120,18 @@ export function ExamMode({
   }, [warning]);
 
   const setAnswer = (v: string) => setAnswers((prev) => prev.map((a, i) => (i === idx ? v : a)));
+
+  if (questions.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen bg-background">
+        <AlertTriangle className="w-12 h-12 text-destructive mb-4" />
+        <h2 className="text-xl font-mono text-foreground mb-4">No questions available</h2>
+        <button onClick={onCancel} className="px-4 py-2 bg-primary text-primary-foreground rounded">
+          Go Back
+        </button>
+      </div>
+    );
+  }
 
   const q = questions[idx];
 

@@ -6,6 +6,7 @@ export interface Question {
   question: string;
   answer: string;
   keywords: string[];
+  fileId?: string;
 }
 
 const BASE: Omit<Question, "id" | "module">[] = [

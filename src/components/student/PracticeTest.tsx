@@ -1,8 +1,10 @@
 import { useState, useSyncExternalStore } from "react";
 import { COURSES } from "@/utils/mockData";
 import { shuffle } from "@/utils/shuffle";
-import { ExamMode, type ExamResult } from "./ExamMode";
+import { ExamMode, type ExamResult, type ExamFinishMeta } from "./ExamMode";
 import { questionStore } from "@/utils/questionStore";
+import { examHistory } from "@/utils/examHistoryStore";
+import { toast } from "sonner";
 
 type Mode = "config" | "exam" | "results";
 
@@ -28,8 +30,21 @@ export function PracticeTest() {
   });
 
   const start = () => {
-    const pool = module === "all" ? subjectQuestions : subjectQuestions.filter((q) => q.module === module);
+    const pool =
+      module === "all"
+        ? subjectQuestions
+        : subjectQuestions.filter((q) => String(q.module) === String(module));
     const picked = shuffle(pool).slice(0, 10);
+    
+    if (picked.length === 0) {
+      toast.error("No questions found for the selected module.");
+      return;
+    }
+
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+
     setQuestions(picked);
     setMode("exam");
   };
@@ -39,7 +54,17 @@ export function PracticeTest() {
       <ExamMode
         questions={questions}
         title={`Practice Test — ${course}`}
-        onFinish={(r) => {
+        onFinish={(r: ExamResult[], meta: ExamFinishMeta) => {
+          examHistory.addRecord({
+            type: "practice",
+            course,
+            startedAt: meta.startedAt,
+            endedAt: meta.endedAt,
+            questionsTotal: r.length,
+            questionsAttempted: meta.questionsAttempted,
+            score: Math.round(r.reduce((s, x) => s + x.match, 0) / r.length),
+            results: r,
+          });
           setResults(r);
           setMode("results");
         }}

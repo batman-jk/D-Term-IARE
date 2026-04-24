@@ -68,7 +68,10 @@ function RootShell({ children }: { children: React.ReactNode }) {
 }
 
 function ThemeToggle() {
-  const { isDark, toggle } = useDarkMode();
+  const { isDark, toggle, mounted } = useDarkMode();
+  
+  if (!mounted) return null;
+
   return (
     <button
       id="global-theme-toggle"

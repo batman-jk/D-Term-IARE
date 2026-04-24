@@ -2,7 +2,7 @@ import { useState, useRef } from "react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { questionStore } from "@/utils/questionStore";
-import { Home, Upload, FileText, Trophy, FileUp, ChevronDown, Trash2 } from "lucide-react";
+import { Home, Upload, FileText, Trophy, FileUp, ChevronDown, Trash2, Loader2 } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { MOCK_RESOURCES, MOCK_FACULTY_RESULTS, COURSES } from "@/utils/mockData";
 import type { AppUser } from "@/utils/userStore";
@@ -72,79 +72,112 @@ function UploadTab() {
   const [files, setFiles] = useState(MOCK_RESOURCES.map((f, i) => ({ ...f, id: `init-${i}` })));
   const [course, setCourse] = useState(COURSES[0]);
   const [module, setModule] = useState(1);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        console.log("File loaded, starting to parse...");
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const wb = XLSX.read(data, { type: "array" });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
+    setIsUploading(true);
+    setUploadProgress(0);
 
-        const jsonData =
-          XLSX.utils.sheet_to_json<Record<string, string | number | boolean | null>>(ws);
-        console.log("Parsed JSON Data:", jsonData);
+    // Simulate network upload progress for better UX
+    const duration = 1200;
+    const intervalTime = 50;
+    const steps = duration / intervalTime;
+    let step = 0;
 
-        const newQuestions = jsonData
-          .map((row) => {
-            const normalizedRow: Record<string, string | number | boolean | null> = {};
-            for (const key in row) {
-              normalizedRow[key.toLowerCase().trim()] = row[key];
+    const timer = setInterval(() => {
+      step++;
+      setUploadProgress(Math.min(Math.round((step / steps) * 100), 99));
+
+      if (step >= steps) {
+        clearInterval(timer);
+        
+        // Actually read and parse the file
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          try {
+            console.log("File loaded, starting to parse...");
+            const data = new Uint8Array(evt.target?.result as ArrayBuffer);
+            const wb = XLSX.read(data, { type: "array" });
+            const wsname = wb.SheetNames[0];
+            const ws = wb.Sheets[wsname];
+
+            const jsonData =
+              XLSX.utils.sheet_to_json<Record<string, string | number | boolean | null>>(ws);
+            console.log("Parsed JSON Data:", jsonData);
+
+            const newQuestions = jsonData
+              .map((row) => {
+                const normalizedRow: Record<string, string | number | boolean | null> = {};
+                for (const key in row) {
+                  normalizedRow[key.toLowerCase().trim()] = row[key];
+                }
+                return {
+                  course: String(normalizedRow.course || normalizedRow.subject || wsname || course),
+                  subject: String(normalizedRow.subject || normalizedRow.course || wsname || course),
+                  module: (() => {
+                    const raw =
+                      normalizedRow.module ??
+                      normalizedRow.modulename ??
+                      normalizedRow.module_name;
+                    if (raw !== null && raw !== undefined && typeof raw !== "boolean") return raw;
+                    return module;
+                  })(),
+                  question: String(normalizedRow.question ?? ""),
+                  answer: String(normalizedRow.answer ?? ""),
+                  keywords:
+                    typeof normalizedRow.keywords === "string"
+                      ? normalizedRow.keywords.split(",").map((k) => k.trim())
+                      : [],
+                };
+              })
+              .filter((q) => q.question && q.answer);
+
+            console.log("Extracted Questions:", newQuestions);
+
+            if (newQuestions.length > 0) {
+              const fileId = `${Date.now()}`;
+              questionStore.addQuestions(newQuestions, fileId);
+              toast.success(`✓ ${newQuestions.length} questions added to ${course} · Module ${module}`);
+              setFiles((prev) => [
+                {
+                  id: fileId,
+                  filename: file.name,
+                  course,
+                  module,
+                  date: new Date().toISOString().slice(0, 10),
+                },
+                ...prev,
+              ]);
+            } else {
+              toast.error(
+                "No valid questions found. Check column headers: question, answer, keywords.",
+              );
             }
-            return {
-              course: String(normalizedRow.course || normalizedRow.subject || wsname || course),
-              subject: String(normalizedRow.subject || normalizedRow.course || wsname || course),
-              module: normalizedRow.module || normalizedRow.modulename || normalizedRow.module_name || module,
-              question: String(normalizedRow.question ?? ""),
-              answer: String(normalizedRow.answer ?? ""),
-              keywords:
-                typeof normalizedRow.keywords === "string"
-                  ? normalizedRow.keywords.split(",").map((k) => k.trim())
-                  : [],
-            };
-          })
-          .filter((q) => q.question && q.answer);
+          } catch (err) {
+            console.error("Error parsing file:", err);
+            toast.error("Failed to parse file.");
+          }
 
-        console.log("Extracted Questions:", newQuestions);
-
-        if (newQuestions.length > 0) {
-          questionStore.addQuestions(newQuestions);
-          toast.success(`✓ ${newQuestions.length} questions added to ${course} · Module ${module}`);
-          setFiles((prev) => [
-            {
-              id: `${Date.now()}`,
-              filename: file.name,
-              course,
-              module,
-              date: new Date().toISOString().slice(0, 10),
-            },
-            ...prev,
-          ]);
-        } else {
-          toast.error(
-            "No valid questions found. Check column headers: question, answer, keywords.",
-          );
-        }
-      } catch (err) {
-        console.error("Error parsing file:", err);
-        toast.error("Failed to parse file.");
+          setUploadProgress(100);
+          setTimeout(() => {
+            setIsUploading(false);
+            if (fileInputRef.current) fileInputRef.current.value = "";
+          }, 400);
+        };
+        reader.readAsArrayBuffer(file);
       }
-
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    };
-    reader.readAsArrayBuffer(file);
+    }, intervalTime);
   };
 
   const deleteFile = (id: string) => {
     const target = files.find((f) => f.id === id);
     if (target) {
-      questionStore.removeByFile(target.course, target.module);
+      questionStore.removeByFileId(id);
     }
     setFiles((prev) => prev.filter((f) => f.id !== id));
     toast.success(
@@ -214,19 +247,37 @@ function UploadTab() {
         ref={fileInputRef}
         onChange={handleFileUpload}
       />
-      <button
-        onClick={() => fileInputRef.current?.click()}
-        className="w-full max-w-3xl border-2 border-dashed border-border rounded p-10 text-center hover:border-primary transition-colors mb-8 cursor-pointer group"
-      >
-        <FileUp className="w-10 h-10 text-muted-foreground mx-auto mb-3 group-hover:text-primary transition-colors" />
-        <div className="text-foreground font-mono">
-          Upload for <span className="text-primary">{course}</span> · Module{" "}
-          <span className="text-primary">{module}</span>
+      {isUploading ? (
+        <div className="w-full max-w-3xl border-2 border-border rounded p-10 flex flex-col items-center justify-center bg-muted/20 mb-8">
+          <Loader2 className="w-10 h-10 text-primary animate-spin mb-4" />
+          <div className="text-foreground font-mono mb-2">
+            Uploading resources for <span className="text-primary">{course}</span>...
+          </div>
+          <div className="w-64 h-2 bg-muted rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-primary transition-all duration-75 ease-linear" 
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+          <div className="text-xs text-muted-foreground mt-2 font-mono">
+            {uploadProgress}%
+          </div>
         </div>
-        <div className="text-xs text-muted-foreground mt-1">
-          Accepts .csv or .xlsx — columns: question, answer, keywords
-        </div>
-      </button>
+      ) : (
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="w-full max-w-3xl border-2 border-dashed border-border rounded p-10 text-center hover:border-primary transition-colors mb-8 cursor-pointer group bg-card"
+        >
+          <FileUp className="w-10 h-10 text-muted-foreground mx-auto mb-3 group-hover:text-primary transition-colors" />
+          <div className="text-foreground font-mono">
+            Upload for <span className="text-primary">{course}</span> · Module{" "}
+            <span className="text-primary">{module}</span>
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">
+            Accepts .csv or .xlsx — columns: question, answer, keywords
+          </div>
+        </button>
+      )}
 
       {/* Files for selected course only */}
       <div className="max-w-3xl">

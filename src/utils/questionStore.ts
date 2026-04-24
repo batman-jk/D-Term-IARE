@@ -23,10 +23,11 @@ try {
 }
 
 export const questionStore = {
-  addQuestions(newQuestions: Omit<Question, "id">[]) {
+  addQuestions(newQuestions: Omit<Question, "id" | "fileId">[], fileId?: string) {
     const questionsToAdd = newQuestions.map((q) => ({
       ...q,
       id: `m${q.module}-q${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      fileId,
     }));
 
     questions = [...questions, ...questionsToAdd];
@@ -40,11 +41,9 @@ export const questionStore = {
     emitChange();
   },
 
-  /** Remove all questions belonging to a specific course + module (used when faculty deletes a file). */
-  removeByFile(course: string, module: number) {
-    questions = questions.filter(
-      (q) => !(q.course === course && q.module === module),
-    );
+  /** Remove all questions belonging to a specific file */
+  removeByFileId(fileId: string) {
+    questions = questions.filter((q) => q.fileId !== fileId);
 
     try {
       localStorage.setItem("dterm_questions", JSON.stringify(questions));

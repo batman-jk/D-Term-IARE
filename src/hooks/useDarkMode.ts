@@ -8,9 +8,16 @@ function getInitialTheme(): boolean {
 }
 
 export function useDarkMode() {
-  const [isDark, setIsDark] = useState<boolean>(getInitialTheme);
+  const [isDark, setIsDark] = useState<boolean>(false);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
+    setIsDark(getInitialTheme());
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
     const root = document.documentElement;
     if (isDark) {
       root.classList.add("dark");
@@ -19,9 +26,9 @@ export function useDarkMode() {
       root.classList.remove("dark");
       localStorage.setItem("theme", "light");
     }
-  }, [isDark]);
+  }, [isDark, mounted]);
 
   const toggle = () => setIsDark((prev) => !prev);
 
-  return { isDark, toggle };
+  return { isDark, toggle, mounted };
 }
