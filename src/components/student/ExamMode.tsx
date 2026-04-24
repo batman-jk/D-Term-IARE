@@ -117,8 +117,7 @@ export function ExamMode({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [warning]);
 
-  const setAnswer = (v: string) =>
-    setAnswers((prev) => prev.map((a, i) => (i === idx ? v : a)));
+  const setAnswer = (v: string) => setAnswers((prev) => prev.map((a, i) => (i === idx ? v : a)));
 
   const q = questions[idx];
 
@@ -126,7 +125,9 @@ export function ExamMode({
     <div ref={containerRef} className="fixed inset-0 z-50 bg-background flex flex-col">
       <div className="border-b border-border p-5 flex items-center justify-between">
         <div>
-          <div className="text-xs uppercase tracking-widest text-destructive">⚫ EXAM IN PROGRESS</div>
+          <div className="text-xs uppercase tracking-widest text-destructive">
+            ⚫ EXAM IN PROGRESS
+          </div>
           <div className="font-mono text-lg text-foreground">{title}</div>
         </div>
         <div className="font-mono text-sm text-primary">
@@ -191,11 +192,7 @@ export function ExamMode({
                 key={i}
                 onClick={() => setIdx(i)}
                 className={`h-1.5 rounded ${
-                  i === idx
-                    ? "bg-primary"
-                    : answers[i]
-                      ? "bg-primary/50"
-                      : "bg-border"
+                  i === idx ? "bg-primary" : answers[i] ? "bg-primary/50" : "bg-border"
                 }`}
               />
             ))}
@@ -216,9 +213,7 @@ export function ExamMode({
         <div className="absolute inset-0 bg-background/95 z-50 flex items-center justify-center">
           <div className="border-2 border-destructive bg-card p-8 rounded max-w-md text-center">
             <AlertTriangle className="w-12 h-12 text-destructive mx-auto mb-4" />
-            <div className="font-mono text-lg text-foreground mb-2">
-              ⚠ Fullscreen exited
-            </div>
+            <div className="font-mono text-lg text-foreground mb-2">⚠ Fullscreen exited</div>
             <p className="text-sm text-muted-foreground mb-4">
               Test will auto-submit in{" "}
               <span className="text-destructive font-mono font-bold text-xl">{countdown}</span>{" "}

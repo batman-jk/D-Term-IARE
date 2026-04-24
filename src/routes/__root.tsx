@@ -1,4 +1,7 @@
 import { Outlet, Link, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
+import { Moon, Sun } from "lucide-react";
+import { useDarkMode } from "@/hooks/useDarkMode";
+import { Toaster } from "@/components/ui/sonner";
 
 import appCss from "../styles.css?url";
 
@@ -64,6 +67,26 @@ function RootShell({ children }: { children: React.ReactNode }) {
   );
 }
 
+function ThemeToggle() {
+  const { isDark, toggle } = useDarkMode();
+  return (
+    <button
+      id="global-theme-toggle"
+      onClick={toggle}
+      title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      className="fixed top-4 right-4 z-50 flex items-center justify-center w-10 h-10 rounded-full border border-border bg-card text-foreground shadow-md hover:bg-accent hover:text-accent-foreground transition-all duration-200 hover:scale-110"
+    >
+      {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+    </button>
+  );
+}
+
 function RootComponent() {
-  return <Outlet />;
+  return (
+    <>
+      <ThemeToggle />
+      <Toaster position="top-right" richColors closeButton />
+      <Outlet />
+    </>
+  );
 }

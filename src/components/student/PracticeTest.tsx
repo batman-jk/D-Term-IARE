@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore } from "react";
-import { SUBJECTS } from "@/utils/mockData";
+import { COURSES } from "@/utils/mockData";
 import { shuffle } from "@/utils/shuffle";
 import { ExamMode, type ExamResult } from "./ExamMode";
 import { questionStore } from "@/utils/questionStore";
@@ -8,16 +8,20 @@ type Mode = "config" | "exam" | "results";
 
 export function PracticeTest() {
   const [mode, setMode] = useState<Mode>("config");
-  const storeQuestions = useSyncExternalStore(questionStore.subscribe, questionStore.getQuestions, questionStore.getQuestions);
+  const storeQuestions = useSyncExternalStore(
+    questionStore.subscribe,
+    questionStore.getQuestions,
+    questionStore.getQuestions,
+  );
   
-  const subjects = Array.from(new Set(storeQuestions.map(q => q.subject || "General"))).filter(Boolean);
-  const [subject, setSubject] = useState(subjects[0] || "General");
+  const subjects = Array.from(new Set(storeQuestions.map(q => q.subject || q.course || "General"))).filter(Boolean);
+  const [course, setCourse] = useState(subjects[0] || COURSES[0]);
   const [module, setModule] = useState<number | string | "all">("all");
   const [duration, setDuration] = useState(10);
   const [questions, setQuestions] = useState(storeQuestions.slice(0, 10));
   const [results, setResults] = useState<ExamResult[]>([]);
 
-  const subjectQuestions = storeQuestions.filter(q => (q.subject || "General") === subject);
+  const subjectQuestions = storeQuestions.filter(q => (q.subject || q.course || "General") === course);
   const availableModules = Array.from(new Set(subjectQuestions.map(q => q.module))).sort((a, b) => {
     if (typeof a === 'number' && typeof b === 'number') return a - b;
     return String(a).localeCompare(String(b));
@@ -34,7 +38,7 @@ export function PracticeTest() {
     return (
       <ExamMode
         questions={questions}
-        title={`Practice Test — ${subject}`}
+        title={`Practice Test — ${course}`}
         onFinish={(r) => {
           setResults(r);
           setMode("results");
@@ -75,11 +79,15 @@ export function PracticeTest() {
                   Match: {r.match}%
                 </span>
               </div>
-              <div className="text-xs uppercase tracking-widest text-muted-foreground">Your answer</div>
+              <div className="text-xs uppercase tracking-widest text-muted-foreground">
+                Your answer
+              </div>
               <div className="font-mono text-sm text-foreground mb-2">
                 {r.given || <span className="text-muted-foreground italic">— blank —</span>}
               </div>
-              <div className="text-xs uppercase tracking-widest text-muted-foreground">Correct answer</div>
+              <div className="text-xs uppercase tracking-widest text-muted-foreground">
+                Correct answer
+              </div>
               <div className="font-mono text-sm text-muted-foreground">{r.correct}</div>
             </div>
           ))}
@@ -99,16 +107,20 @@ export function PracticeTest() {
         <div className="space-y-4">
           <div>
             <label className="block text-xs uppercase tracking-widest text-muted-foreground mb-1.5">
-              Subject
+              Course
             </label>
             <select
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
+              value={course}
+              onChange={(e) => setCourse(e.target.value)}
               className="w-full bg-input border border-border rounded px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
             >
-              {subjects.map((s) => (
+              {subjects.length > 0 ? subjects.map((s) => (
                 <option key={s} value={s}>{s}</option>
-              ))}
+              )) : (
+                COURSES.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))
+              )}
             </select>
           </div>
 

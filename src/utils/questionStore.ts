@@ -28,15 +28,30 @@ export const questionStore = {
       ...q,
       id: `m${q.module}-q${Date.now()}-${Math.floor(Math.random() * 1000)}`,
     }));
-    
+
     questions = [...questions, ...questionsToAdd];
-    
+
     try {
       localStorage.setItem("dterm_questions", JSON.stringify(questions));
     } catch (e) {
       console.error("Failed to save questions to local storage", e);
     }
-    
+
+    emitChange();
+  },
+
+  /** Remove all questions belonging to a specific course + module (used when faculty deletes a file). */
+  removeByFile(course: string, module: number) {
+    questions = questions.filter(
+      (q) => !(q.course === course && q.module === module),
+    );
+
+    try {
+      localStorage.setItem("dterm_questions", JSON.stringify(questions));
+    } catch (e) {
+      console.error("Failed to save questions to local storage", e);
+    }
+
     emitChange();
   },
 

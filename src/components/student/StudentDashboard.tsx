@@ -1,13 +1,14 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Home, BookOpen, FileText, Trophy, Lock, Layers } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
-import { QUESTIONS, SUBJECTS } from "@/utils/mockData";
+import { QUESTIONS, COURSES } from "@/utils/mockData";
 import { shuffle } from "@/utils/shuffle";
 import { Flashcard } from "./Flashcard";
 import { PracticeTest } from "./PracticeTest";
 import { ExamMode, type ExamResult } from "./ExamMode";
 import { getDtLaunched, subscribeDt } from "@/utils/examStore";
 import { questionStore } from "@/utils/questionStore";
+import type { AppUser } from "@/utils/userStore";
 
 const NAV = [
   { key: "home", label: "Home", icon: Home },
@@ -17,13 +18,15 @@ const NAV = [
   { key: "results", label: "My Results", icon: Trophy },
 ];
 
-export function StudentDashboard({ onLogout }: { onLogout: () => void }) {
+export function StudentDashboard({
+  user,
+  onLogout,
+}: {
+  user: AppUser;
+  onLogout: () => void;
+}) {
   const [tab, setTab] = useState("home");
-  const dtLaunched = useSyncExternalStore(
-    (cb) => subscribeDt(cb),
-    getDtLaunched,
-    getDtLaunched,
-  );
+  const dtLaunched = useSyncExternalStore((cb) => subscribeDt(cb), getDtLaunched, getDtLaunched);
 
   return (
     <div className="min-h-screen flex bg-background">
@@ -32,11 +35,11 @@ export function StudentDashboard({ onLogout }: { onLogout: () => void }) {
         active={tab}
         onSelect={setTab}
         role="Student"
-        user="Arjun Mehta"
+        user={user.displayName}
         onLogout={onLogout}
       />
       <main className="flex-1 p-8 overflow-auto">
-        {tab === "home" && <HomeTab dtLaunched={dtLaunched} onGo={setTab} />}
+        {tab === "home" && <HomeTab name={user.displayName} dtLaunched={dtLaunched} onGo={setTab} />}
         {tab === "study" && <StudyTab />}
         {tab === "practice" && (
           <Section title="Practice Test" subtitle="Take a self-paced practice run">
@@ -68,11 +71,19 @@ function Section({
   );
 }
 
-function HomeTab({ dtLaunched, onGo }: { dtLaunched: boolean; onGo: (k: string) => void }) {
+function HomeTab({
+  name,
+  dtLaunched,
+  onGo,
+}: {
+  name: string;
+  dtLaunched: boolean;
+  onGo: (k: string) => void;
+}) {
   return (
     <div>
       <div className="border border-border bg-card rounded p-6 mb-6">
-        <h1 className="font-mono text-3xl text-foreground">Hello, Arjun 👋</h1>
+        <h1 className="font-mono text-3xl text-foreground">Hello, {name} 👋</h1>
         <p className="text-sm text-muted-foreground mt-2">
           Continue building your definitions vault.
         </p>
@@ -80,7 +91,9 @@ function HomeTab({ dtLaunched, onGo }: { dtLaunched: boolean; onGo: (k: string) 
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="border border-border bg-card rounded p-5">
-          <div className="text-xs uppercase tracking-widest text-muted-foreground">DT Exam Status</div>
+          <div className="text-xs uppercase tracking-widest text-muted-foreground">
+            DT Exam Status
+          </div>
           <div className="mt-3">
             {dtLaunched ? (
               <span className="inline-block bg-primary text-primary-foreground font-mono text-xs px-2 py-1 rounded">
@@ -117,7 +130,11 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 function StudyTab() {
-  const questions = useSyncExternalStore(questionStore.subscribe, questionStore.getQuestions, questionStore.getQuestions);
+  const questions = useSyncExternalStore(
+    questionStore.subscribe,
+    questionStore.getQuestions,
+    questionStore.getQuestions,
+  );
 
   if (questions.length === 0) {
     return (
@@ -131,11 +148,11 @@ function StudyTab() {
     );
   }
 
-  const subjects = Array.from(new Set(questions.map(q => q.subject || "General"))).filter(Boolean);
-  const [subject, setSubject] = useState(subjects[0] || "General");
+  const subjects = Array.from(new Set(questions.map(q => q.subject || q.course || "General"))).filter(Boolean);
+  const [course, setCourse] = useState(subjects[0] || COURSES[0]);
   const [module, setModule] = useState<number | string | null>(null);
 
-  const subjectQuestions = questions.filter(q => (q.subject || "General") === subject);
+  const subjectQuestions = questions.filter(q => (q.subject || q.course || "General") === course);
   const availableModules = Array.from(new Set(subjectQuestions.map((q) => q.module))).sort((a, b) => {
     if (typeof a === 'number' && typeof b === 'number') return a - b;
     return String(a).localeCompare(String(b));
@@ -146,7 +163,7 @@ function StudyTab() {
     return (
       <Flashcard
         cards={cards}
-        title={`${subject} · Module ${module}`}
+        title={`${course} · Module ${module}`}
         onClose={() => setModule(null)}
       />
     );
@@ -156,16 +173,20 @@ function StudyTab() {
     <Section title="Study" subtitle="Flip through definitions module by module">
       <div className="mb-6 max-w-xs">
         <label className="block text-xs uppercase tracking-widest text-muted-foreground mb-1.5">
-          Subject
+          Course
         </label>
         <select
-          value={subject}
-          onChange={(e) => setSubject(e.target.value)}
+          value={course}
+          onChange={(e) => setCourse(e.target.value)}
           className="w-full bg-input border border-border rounded px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
         >
-          {subjects.map((s) => (
+          {subjects.length > 0 ? subjects.map((s) => (
             <option key={s} value={s}>{s}</option>
-          ))}
+          )) : (
+            COURSES.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))
+          )}
         </select>
       </div>
 
@@ -194,7 +215,11 @@ function StudyTab() {
 }
 
 function ExamTab({ dtLaunched }: { dtLaunched: boolean }) {
-  const storeQuestions = useSyncExternalStore(questionStore.subscribe, questionStore.getQuestions, questionStore.getQuestions);
+  const storeQuestions = useSyncExternalStore(
+    questionStore.subscribe,
+    questionStore.getQuestions,
+    questionStore.getQuestions,
+  );
   const availableModules = Array.from(new Set(storeQuestions.map((q) => q.module))).sort((a, b) => {
     if (typeof a === 'number' && typeof b === 'number') return a - b;
     return String(a).localeCompare(String(b));

@@ -59,10 +59,7 @@ export function Flashcard({
       </div>
 
       <div className="flex-1 flex flex-col items-center justify-center p-8">
-        <div
-          className="flashcard-perspective w-full max-w-2xl h-80 cursor-pointer"
-          onClick={flip}
-        >
+        <div className="flashcard-perspective w-full max-w-2xl h-80 cursor-pointer" onClick={flip}>
           <div className={`flashcard-inner relative w-full h-full ${flipped ? "flipped" : ""}`}>
             <div className="flashcard-face absolute inset-0 bg-card border border-border rounded p-10 flex flex-col justify-center">
               <div className="text-xs uppercase tracking-widest text-muted-foreground mb-4">
