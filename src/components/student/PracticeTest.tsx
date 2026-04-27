@@ -4,12 +4,17 @@ import { shuffle } from "@/utils/shuffle";
 import { ExamMode, type ExamResult, type ExamFinishMeta } from "./ExamMode";
 import { questionStore } from "@/utils/questionStore";
 import { examHistory } from "@/utils/examHistoryStore";
+import { practiceTestStore } from "@/services/practiceTestStore";
 import { toast } from "sonner";
 
 type Mode = "config" | "exam" | "results";
+type Tab = "configure" | "join";
 
 export function PracticeTest() {
   const [mode, setMode] = useState<Mode>("config");
+  const [activeTab, setActiveTab] = useState<Tab>("configure");
+  const [joinCode, setJoinCode] = useState("");
+  const [joinError, setJoinError] = useState<string | null>(null);
   const storeQuestions = useSyncExternalStore(
     questionStore.subscribe,
     questionStore.getQuestions,
@@ -22,6 +27,20 @@ export function PracticeTest() {
   const [duration, setDuration] = useState(10);
   const [questions, setQuestions] = useState(storeQuestions.slice(0, 10));
   const [results, setResults] = useState<ExamResult[]>([]);
+
+  const handleJoin = () => {
+    const config = practiceTestStore.getByCode(joinCode);
+    if (!config) {
+      setJoinError("Invalid or expired code. Check with your faculty.");
+      return;
+    }
+    setJoinError(null);
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+    setQuestions(shuffle(config.questions).slice(0, Math.min(config.questions.length, 20)));
+    setMode("exam");
+  };
 
   const subjectQuestions = storeQuestions.filter(q => (q.subject || q.course || "General") === course);
   const availableModules = Array.from(new Set(subjectQuestions.map(q => q.module))).sort((a, b) => {
@@ -122,7 +141,50 @@ export function PracticeTest() {
   }
 
   return (
-    <div className="max-w-xl">
+    <div className="max-w-xl space-y-5">
+      {/* Tab switcher */}
+      <div className="flex bg-muted rounded-xl p-1 gap-1">
+        {(["configure", "join"] as Tab[]).map(t => (
+          <button
+            key={t}
+            onClick={() => setActiveTab(t)}
+            className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${
+              activeTab === t
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {t === "configure" ? "Self-Configure" : "Join by Code"}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "join" && (
+        <div className="border border-border bg-card rounded-xl p-6 space-y-4">
+          <h2 className="font-mono text-xl text-foreground">Join Faculty Test</h2>
+          <p className="text-sm text-muted-foreground">Enter the code shared by your faculty to take their practice test.</p>
+          <div className="flex gap-2">
+            <input
+              value={joinCode}
+              onChange={e => { setJoinCode(e.target.value.toUpperCase()); setJoinError(null); }}
+              onKeyDown={e => e.key === "Enter" && handleJoin()}
+              placeholder="6-character code"
+              maxLength={6}
+              className="flex-1 font-mono text-center text-xl tracking-widest bg-input border border-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-primary uppercase"
+            />
+            <button
+              onClick={handleJoin}
+              disabled={joinCode.length < 4}
+              className="px-5 py-3 bg-primary text-primary-foreground rounded-lg font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
+            >
+              Join
+            </button>
+          </div>
+          {joinError && <p className="text-xs text-destructive font-medium">{joinError}</p>}
+        </div>
+      )}
+
+      {activeTab === "configure" && (
       <div className="border border-border bg-card rounded p-6">
         <h2 className="font-mono text-xl text-foreground mb-1">Configure Practice Test</h2>
         <p className="text-sm text-muted-foreground mb-6">
@@ -193,6 +255,7 @@ export function PracticeTest() {
           </p>
         </div>
       </div>
+      )}
     </div>
   );
 }

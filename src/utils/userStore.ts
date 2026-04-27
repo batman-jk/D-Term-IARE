@@ -6,6 +6,10 @@ export interface AppUser {
   password: string;
   role: UserRole;
   displayName: string;
+  department?: string;
+  sem?: string;
+  section?: string;
+  subject?: string;
 }
 
 const STORAGE_KEY = "dterm_users";

@@ -2,10 +2,12 @@ import { useState, useRef } from "react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { questionStore } from "@/utils/questionStore";
+import { practiceTestStore } from "@/services/practiceTestStore";
 import { Home, Upload, FileText, Trophy, FileUp, ChevronDown, Trash2, Loader2 } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { MOCK_RESOURCES, MOCK_FACULTY_RESULTS, COURSES } from "@/utils/mockData";
 import type { AppUser } from "@/utils/userStore";
+import { departmentStore } from "@/services/departmentStore";
 
 const NAV = [
   { key: "home", label: "Home", icon: Home },
@@ -35,8 +37,8 @@ export function FacultyDashboard({
       />
       <main className="flex-1 p-8 overflow-auto">
         {tab === "home" && <HomeTab name={user.displayName} />}
-        {tab === "upload" && <UploadTab />}
-        {tab === "conduct" && <ConductTab />}
+        {tab === "upload" && <UploadTab user={user} />}
+        {tab === "conduct" && <ConductTab user={user} />}
         {tab === "results" && <ResultsTab />}
       </main>
     </div>
@@ -68,9 +70,19 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function UploadTab() {
+function UploadTab({ user }: { user: AppUser }) {
   const [files, setFiles] = useState(MOCK_RESOURCES.map((f, i) => ({ ...f, id: `init-${i}` })));
-  const [course, setCourse] = useState(COURSES[0]);
+  
+  const assignments = departmentStore.getAssignments().filter(a => a.facultyId === user.id);
+  // Also include the generic subject if the faculty was given a legacy 'subject' field
+  const assignedSubjects = Array.from(new Set([
+    ...assignments.map(a => a.subject),
+    user.subject
+  ].filter(Boolean) as string[]));
+  
+  const subjectsToPick = assignedSubjects.length > 0 ? assignedSubjects : COURSES;
+
+  const [course, setCourse] = useState(subjectsToPick[0]);
   const [module, setModule] = useState(1);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -209,7 +221,7 @@ function UploadTab() {
               onChange={(e) => setCourse(e.target.value)}
               className="w-full appearance-none bg-input border border-border rounded px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary pr-8"
             >
-              {COURSES.map((c) => (
+              {subjectsToPick.map((c) => (
                 <option key={c}>{c}</option>
               ))}
             </select>
@@ -335,15 +347,22 @@ function UploadTab() {
   );
 }
 
-function ConductTab() {
+function ConductTab({ user }: { user: AppUser }) {
   const storeQuestions = questionStore.getQuestions();
-  const subjects = Array.from(new Set(storeQuestions.map(q => q.subject || q.course || "General"))).filter(Boolean);
   
-  const [subject, setSubject] = useState(subjects[0] || COURSES[0]);
-  const [course, setCourse] = useState(subjects[0] || COURSES[0]);
+  const assignments = departmentStore.getAssignments().filter(a => a.facultyId === user.id);
+  const assignedSubjects = Array.from(new Set([
+    ...assignments.map(a => a.subject),
+    user.subject
+  ].filter(Boolean) as string[]));
+  
+  const subjectsToPick = assignedSubjects.length > 0 ? assignedSubjects : Array.from(new Set(storeQuestions.map(q => q.subject || q.course || "General"))).filter(Boolean);
+  
+  const [subject, setSubject] = useState(subjectsToPick[0] || COURSES[0]);
   const [modules, setModules] = useState<Array<number | string>>([]);
   const [duration, setDuration] = useState(15);
   const [code, setCode] = useState<string | null>(null);
+  const [createdConfig, setCreatedConfig] = useState<ReturnType<typeof practiceTestStore.createTest> | null>(null);
 
   const toggle = (m: number | string) =>
     setModules((prev) => (prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]));
@@ -354,16 +373,34 @@ function ConductTab() {
     return String(a).localeCompare(String(b));
   });
 
+  // Questions sourced from flashcards only
+  const selectedModuleStrings = modules.map(String);
+  const testQuestions = subjectQuestions.filter(q =>
+    modules.length === 0 || selectedModuleStrings.includes(String(q.module))
+  );
+
   const launch = () => {
-    const c = Math.random().toString(36).substring(2, 8).toUpperCase();
-    setCode(c);
+    if (testQuestions.length === 0) {
+      toast.error("No questions available. Upload flashcards for this subject first.");
+      return;
+    }
+    const config = practiceTestStore.createTest({
+      subject,
+      modules: modules.length > 0 ? modules.map(String) : ["All"],
+      duration,
+      questions: testQuestions,
+      createdBy: "Faculty",
+    });
+    setCode(config.code);
+    setCreatedConfig(config);
+    toast.success(`Practice test launched! Code: ${config.code}`);
   };
 
   return (
     <div>
       <h1 className="font-mono text-3xl text-foreground">Conduct Practice Test</h1>
       <p className="text-sm text-muted-foreground mt-1 mb-6">
-        Build a custom test for your students.
+        Questions are sourced from uploaded flashcards. Students join with the generated code.
       </p>
 
       <div className="border border-border bg-card rounded p-6 max-w-xl space-y-4">
@@ -372,11 +409,11 @@ function ConductTab() {
             Course
           </label>
           <select
-            value={course}
-            onChange={(e) => setCourse(e.target.value)}
+            value={subject}
+            onChange={(e) => { setSubject(e.target.value); setModules([]); setCode(null); }}
             className="w-full bg-input border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-primary"
           >
-            {subjects.length > 0 ? subjects.map((s) => (
+            {subjectsToPick.length > 0 ? subjectsToPick.map((s) => (
               <option key={s} value={s}>{s}</option>
             )) : (
               COURSES.map((c) => (
@@ -404,9 +441,14 @@ function ConductTab() {
                 {typeof m === "number" ? `M${m}` : String(m)}
               </button>
             )) : (
-              <div className="text-sm text-muted-foreground italic">No modules available</div>
+              <div className="text-sm text-muted-foreground italic">No modules available — upload flashcards first</div>
             )}
           </div>
+          {testQuestions.length > 0 && (
+            <p className="text-xs text-muted-foreground mt-2 font-mono">
+              {testQuestions.length} questions from flashcards will be used
+            </p>
+          )}
         </div>
 
         <div>
@@ -428,14 +470,14 @@ function ConductTab() {
           Launch Practice Test
         </button>
 
-        {code && (
-          <div className="border border-primary bg-primary/10 rounded p-4 text-center">
+        {code && createdConfig && (
+          <div className="border border-primary bg-primary/10 rounded p-4 text-center space-y-1">
             <div className="text-xs uppercase tracking-widest text-muted-foreground">Join Code</div>
             <div className="font-mono text-3xl font-bold text-primary mt-2 tracking-widest">
               {code}
             </div>
-            <div className="text-xs text-muted-foreground mt-2">
-              Share with students to join the test.
+            <div className="text-xs text-muted-foreground">
+              Share with students • {createdConfig.questions.length} questions • {duration}min
             </div>
           </div>
         )}
