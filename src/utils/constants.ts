@@ -1,4 +1,6 @@
-export const DEPARTMENTS = [
+import { GENERATED_DEPARTMENTS } from "./generatedData";
+
+export const DEPARTMENTS = GENERATED_DEPARTMENTS.length > 0 ? GENERATED_DEPARTMENTS : [
   "CSE",
   "CSE (AI & ML)",
   "CSE (DS)",

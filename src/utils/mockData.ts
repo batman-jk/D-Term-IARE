@@ -67,7 +67,9 @@ export const QUESTIONS: Question[] = (() => {
   return out;
 })();
 
-export const SUBJECTS: string[] = [
+import { GENERATED_SUBJECTS } from "./generatedData";
+
+export const SUBJECTS: string[] = GENERATED_SUBJECTS.length > 0 ? Array.from(new Set(GENERATED_SUBJECTS.map(s => s.name))) : [
   "Computer Networks",
   "DBMS",
   "OS",

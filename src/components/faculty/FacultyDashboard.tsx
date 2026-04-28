@@ -1,8 +1,9 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useSyncExternalStore } from "react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { questionStore } from "@/utils/questionStore";
 import { practiceTestStore } from "@/services/practiceTestStore";
+import { fileStore } from "@/services/fileStore";
 import { Home, Upload, FileText, Trophy, FileUp, ChevronDown, Trash2, Loader2 } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { MOCK_RESOURCES, MOCK_FACULTY_RESULTS, COURSES } from "@/utils/mockData";
@@ -71,7 +72,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 function UploadTab({ user }: { user: AppUser }) {
-  const [files, setFiles] = useState(MOCK_RESOURCES.map((f, i) => ({ ...f, id: `init-${i}` })));
+  const files = useSyncExternalStore(fileStore.subscribe, fileStore.getFiles, fileStore.getFiles);
   
   const assignments = departmentStore.getAssignments().filter(a => a.facultyId === user.id);
   // Also include the generic subject if the faculty was given a legacy 'subject' field
@@ -82,8 +83,8 @@ function UploadTab({ user }: { user: AppUser }) {
   
   const subjectsToPick = assignedSubjects.length > 0 ? assignedSubjects : COURSES;
 
-  const [course, setCourse] = useState(subjectsToPick[0]);
-  const [module, setModule] = useState(1);
+  const [course, setCourse] = useState(subjectsToPick[0] || "");
+  const [modules, setModules] = useState<number[]>([1]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -123,29 +124,34 @@ function UploadTab({ user }: { user: AppUser }) {
             console.log("Parsed JSON Data:", jsonData);
 
             const newQuestions = jsonData
-              .map((row) => {
+              .flatMap((row) => {
                 const normalizedRow: Record<string, string | number | boolean | null> = {};
                 for (const key in row) {
                   normalizedRow[key.toLowerCase().trim()] = row[key];
                 }
-                return {
+                
+                const rawModule =
+                  normalizedRow.module ??
+                  normalizedRow.modulename ??
+                  normalizedRow.module_name;
+
+                const targetModules = (rawModule !== null && rawModule !== undefined && typeof rawModule !== "boolean")
+                  ? [rawModule]
+                  : modules;
+
+                if (targetModules.length === 0) return [];
+
+                return targetModules.map((mod) => ({
                   course: String(normalizedRow.course || normalizedRow.subject || wsname || course),
                   subject: String(normalizedRow.subject || normalizedRow.course || wsname || course),
-                  module: (() => {
-                    const raw =
-                      normalizedRow.module ??
-                      normalizedRow.modulename ??
-                      normalizedRow.module_name;
-                    if (raw !== null && raw !== undefined && typeof raw !== "boolean") return raw;
-                    return module;
-                  })(),
+                  module: mod,
                   question: String(normalizedRow.question ?? ""),
                   answer: String(normalizedRow.answer ?? ""),
                   keywords:
                     typeof normalizedRow.keywords === "string"
                       ? normalizedRow.keywords.split(",").map((k) => k.trim())
                       : [],
-                };
+                }));
               })
               .filter((q) => q.question && q.answer);
 
@@ -154,17 +160,14 @@ function UploadTab({ user }: { user: AppUser }) {
             if (newQuestions.length > 0) {
               const fileId = `${Date.now()}`;
               questionStore.addQuestions(newQuestions, fileId);
-              toast.success(`✓ ${newQuestions.length} questions added to ${course} · Module ${module}`);
-              setFiles((prev) => [
-                {
-                  id: fileId,
-                  filename: file.name,
-                  course,
-                  module,
-                  date: new Date().toISOString().slice(0, 10),
-                },
-                ...prev,
-              ]);
+              toast.success(`✓ ${newQuestions.length} questions added to ${course} · Module(s) ${modules.join(", ")}`);
+              fileStore.addFile({
+                id: fileId,
+                filename: file.name,
+                course,
+                module: modules.join(", ") || "All",
+                date: new Date().toISOString().slice(0, 10),
+              });
             } else {
               toast.error(
                 "No valid questions found. Check column headers: question, answer, keywords.",
@@ -191,7 +194,7 @@ function UploadTab({ user }: { user: AppUser }) {
     if (target) {
       questionStore.removeByFileId(id);
     }
-    setFiles((prev) => prev.filter((f) => f.id !== id));
+    fileStore.removeFile(id);
     toast.success(
       target
         ? `Removed ${target.filename} and its questions from ${target.course} · Module ${target.module}.`
@@ -211,35 +214,39 @@ function UploadTab({ user }: { user: AppUser }) {
 
       {/* Selectors */}
       <div className="flex flex-wrap gap-4 mb-5 max-w-3xl">
-        <div className="flex-1 min-w-[180px]">
+        <div className="flex-1 min-w-[240px]">
           <label className="block text-xs uppercase tracking-widest text-muted-foreground mb-1.5">
-            Course
+            Course (Search or Select)
           </label>
           <div className="relative">
-            <select
+            <input
+              type="text"
+              list="course-options"
               value={course}
               onChange={(e) => setCourse(e.target.value)}
-              className="w-full appearance-none bg-input border border-border rounded px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary pr-8"
-            >
+              placeholder="Search course..."
+              className="w-full bg-input border border-border rounded px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary pr-8"
+            />
+            <datalist id="course-options">
               {subjectsToPick.map((c) => (
-                <option key={c}>{c}</option>
+                <option key={c} value={c} />
               ))}
-            </select>
+            </datalist>
             <ChevronDown className="absolute right-2 top-2.5 w-4 h-4 text-muted-foreground pointer-events-none" />
           </div>
         </div>
 
         <div className="min-w-[130px]">
           <label className="block text-xs uppercase tracking-widest text-muted-foreground mb-1.5">
-            Module
+            Modules
           </label>
           <div className="flex gap-1.5">
             {[1, 2, 3, 4, 5].map((m) => (
               <button
                 key={m}
-                onClick={() => setModule(m)}
+                onClick={() => setModules(prev => prev.includes(m) ? prev.filter(x => x !== m) : [...prev, m])}
                 className={`w-9 h-9 text-sm font-mono rounded border transition-colors ${
-                  module === m
+                  modules.includes(m)
                     ? "border-primary bg-primary/15 text-primary"
                     : "border-border text-muted-foreground hover:border-muted-foreground"
                 }`}
@@ -282,8 +289,8 @@ function UploadTab({ user }: { user: AppUser }) {
         >
           <FileUp className="w-10 h-10 text-muted-foreground mx-auto mb-3 group-hover:text-primary transition-colors" />
           <div className="text-foreground font-mono">
-            Upload for <span className="text-primary">{course}</span> · Module{" "}
-            <span className="text-primary">{module}</span>
+            Upload for <span className="text-primary">{course || "Unselected"}</span> · Module{" "}
+            <span className="text-primary">{modules.length > 0 ? modules.join(", ") : "None"}</span>
           </div>
           <div className="text-xs text-muted-foreground mt-1">
             Accepts .csv or .xlsx — columns: question, answer, keywords

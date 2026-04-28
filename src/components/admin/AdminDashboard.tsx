@@ -14,6 +14,7 @@ import { dtTestStore, type ScheduledExam } from "@/services/dtTestStore";
 import { marksStore, type StudentMark } from "@/services/marksStore";
 import { DEPARTMENTS, SEMESTERS, REGULATIONS } from "@/utils/constants";
 import { departmentStore, type CourseAssignment } from "@/services/departmentStore";
+import { GENERATED_SUBJECTS } from "@/utils/generatedData";
 import { toast } from "sonner";
 
 const NAV = [
@@ -802,7 +803,8 @@ function DepartmentsTab() {
         setRegulation(a.regulation || REGULATIONS[0]);
         setSection(a.section);
         setSubject(a.subject);
-        setFacultyId(a.facultyId);
+        const f = faculties.find(fac => fac.id === a.facultyId);
+        setFacultyId(f ? `${f.id} - ${f.displayName}` : a.facultyId);
       }
     }
   };
@@ -813,13 +815,15 @@ function DepartmentsTab() {
       return;
     }
     
+    const actualFacultyId = facultyId.split(' - ')[0].trim();
+
     const payload = {
       department: department.trim(),
       semester: semester.trim(),
       regulation: regulation.trim(),
       section: section.trim(),
       subject: subject.trim(),
-      facultyId,
+      facultyId: actualFacultyId,
     };
 
     let result;
@@ -915,17 +919,41 @@ function DepartmentsTab() {
               <label className="block text-xs uppercase tracking-widest text-muted-foreground mb-1">Section</label>
               <input value={section} onChange={e => setSection(e.target.value)} placeholder="e.g. A" className="w-full bg-input border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none" />
             </div>
-            <div>
+            <div className="col-span-2 md:col-span-1">
               <label className="block text-xs uppercase tracking-widest text-muted-foreground mb-1">Subject</label>
-              <input value={subject} onChange={e => setSubject(e.target.value)} placeholder="e.g. DAA" className="w-full bg-input border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none" />
+              <div className="relative">
+                <input
+                  type="text"
+                  list="admin-subjects-list"
+                  value={subject}
+                  onChange={e => setSubject(e.target.value)}
+                  placeholder="Search subject..."
+                  className="w-full bg-input border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none pr-8"
+                />
+                <datalist id="admin-subjects-list">
+                  {GENERATED_SUBJECTS.map((s, idx) => (
+                    <option key={idx} value={s.name} />
+                  ))}
+                </datalist>
+                <ChevronDown className="absolute right-2 top-2.5 w-4 h-4 text-muted-foreground pointer-events-none" />
+              </div>
             </div>
             <div>
               <label className="block text-xs uppercase tracking-widest text-muted-foreground mb-1">Faculty</label>
               <div className="relative">
-                <select value={facultyId} onChange={e => setFacultyId(e.target.value)} className="w-full appearance-none bg-input border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none pr-8">
-                  <option value="">Select Faculty...</option>
-                  {faculties.map(f => <option key={f.id} value={f.id}>{f.displayName}</option>)}
-                </select>
+                <input
+                  type="text"
+                  list="admin-faculty-list"
+                  value={facultyId}
+                  onChange={e => setFacultyId(e.target.value)}
+                  placeholder="Search faculty..."
+                  className="w-full bg-input border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none pr-8"
+                />
+                <datalist id="admin-faculty-list">
+                  {faculties.map(f => (
+                    <option key={f.id} value={`${f.id} - ${f.displayName}`} />
+                  ))}
+                </datalist>
                 <ChevronDown className="absolute right-2 top-2.5 w-4 h-4 text-muted-foreground pointer-events-none" />
               </div>
             </div>

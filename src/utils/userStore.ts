@@ -1,3 +1,5 @@
+import { GENERATED_FACULTY } from "./generatedData";
+
 export type UserRole = "Admin" | "Faculty" | "Student";
 
 export interface AppUser {
@@ -10,6 +12,7 @@ export interface AppUser {
   sem?: string;
   section?: string;
   subject?: string;
+  firstLogin?: boolean;
 }
 
 const STORAGE_KEY = "dterm_users";
@@ -23,6 +26,7 @@ const SEED_USERS: AppUser[] = [
     role: "Admin",
     displayName: "D-Term Admin",
   },
+  ...GENERATED_FACULTY
 ];
 
 // ── In-memory state ───────────────────────────────────────────────────────────
@@ -91,7 +95,7 @@ export const userStore = {
 
   updateUser(
     id: string,
-    patch: Partial<Pick<AppUser, "password" | "displayName" | "role">>,
+    patch: Partial<Pick<AppUser, "password" | "displayName" | "role" | "firstLogin">>,
   ): { ok: boolean; error?: string } {
     const idx = users.findIndex((u) => u.id === id);
     if (idx === -1) return { ok: false, error: "User not found." };
