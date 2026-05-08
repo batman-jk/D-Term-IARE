@@ -1,52 +1,67 @@
-import { useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore, useEffect } from "react";
+import { useStoreAsync } from "@/hooks/useStoreAsync";
 import { COURSES } from "@/utils/mockData";
 import { shuffle } from "@/utils/shuffle";
 import { ExamMode, type ExamResult, type ExamFinishMeta } from "./ExamMode";
 import { questionStore } from "@/utils/questionStore";
 import { examHistory } from "@/utils/examHistoryStore";
 import { practiceTestStore } from "@/services/practiceTestStore";
+import { marksStore } from "@/services/marksStore";
 import { toast } from "sonner";
+import { GENERATED_SUBJECTS } from "@/utils/generatedData";
 
 type Mode = "config" | "exam" | "results";
 type Tab = "configure" | "join";
 
-export function PracticeTest() {
+import type { AppUser } from "@/utils/userStore";
+
+export function PracticeTest({ user }: { user: AppUser }) {
   const [mode, setMode] = useState<Mode>("config");
   const [activeTab, setActiveTab] = useState<Tab>("configure");
   const [joinCode, setJoinCode] = useState("");
   const [joinError, setJoinError] = useState<string | null>(null);
-  const storeQuestions = useSyncExternalStore(
+  const [isJoining, setIsJoining] = useState(false);
+  const storeQuestions = useStoreAsync(
     questionStore.subscribe,
     questionStore.getQuestions,
-    questionStore.getQuestions,
+    []
   );
   
-  const subjects = Array.from(new Set(storeQuestions.map(q => q.subject || q.course || "General"))).filter(Boolean);
+  const userDept = user.department;
+  const branchSubjects = GENERATED_SUBJECTS
+    .filter(s => !userDept || s.department === userDept)
+    .map(s => s.name);
+    
+  const subjects = branchSubjects.length > 0 
+    ? Array.from(new Set(branchSubjects)) 
+    : COURSES;
+    
   const [course, setCourse] = useState(subjects[0] || COURSES[0]);
   const [module, setModule] = useState<number | string | "all">("all");
   const [duration, setDuration] = useState(10);
   const [questions, setQuestions] = useState(storeQuestions.slice(0, 10));
   const [results, setResults] = useState<ExamResult[]>([]);
 
-  const handleJoin = () => {
-    const config = practiceTestStore.getByCode(joinCode);
+  const handleJoin = async () => {
+    setIsJoining(true);
+    setJoinError(null);
+    const config = await practiceTestStore.getByCode(joinCode);
     if (!config) {
       setJoinError("Invalid or expired code. Check with your faculty.");
+      setIsJoining(false);
       return;
     }
-    setJoinError(null);
     if (document.documentElement.requestFullscreen) {
       document.documentElement.requestFullscreen().catch(() => {});
     }
     setQuestions(shuffle(config.questions).slice(0, Math.min(config.questions.length, 20)));
+    setCourse(config.subject); // Use the subject from faculty's config
     setMode("exam");
+    setIsJoining(false);
   };
 
   const subjectQuestions = storeQuestions.filter(q => (q.subject || q.course || "General") === course);
-  const availableModules = Array.from(new Set(subjectQuestions.map(q => q.module))).sort((a, b) => {
-    if (typeof a === 'number' && typeof b === 'number') return a - b;
-    return String(a).localeCompare(String(b));
-  });
+  const availableModules = [1, 2, 3, 4, 5];
 
   const start = () => {
     const pool =
@@ -73,8 +88,8 @@ export function PracticeTest() {
       <ExamMode
         questions={questions}
         title={`Practice Test — ${course}`}
-        onFinish={(r: ExamResult[], meta: ExamFinishMeta) => {
-          examHistory.addRecord({
+        onFinish={async (r: ExamResult[], meta: ExamFinishMeta) => {
+          await examHistory.addRecord(user.id, {
             type: "practice",
             course,
             startedAt: meta.startedAt,
@@ -84,6 +99,23 @@ export function PracticeTest() {
             score: Math.round(r.reduce((s, x) => s + x.match, 0) / r.length),
             results: r,
           });
+
+          // If this was a joined test (faculty-led), sync to marksStore so faculty can see it
+          if (activeTab === "join") {
+            await marksStore.addMark({
+              studentUsername: user.username,
+              studentName: user.displayName,
+              department: user.department || "",
+              sem: user.semester || "",
+              section: user.section || "",
+              subject: course,
+              testType: "practice",
+              score: Math.round(r.reduce((s, x) => s + x.match, 0) / r.length),
+              date: new Date().toISOString().slice(0, 10),
+              notes: "Joined via faculty code",
+            });
+          }
+
           setResults(r);
           setMode("results");
         }}
@@ -93,18 +125,18 @@ export function PracticeTest() {
   }
 
   if (mode === "results") {
-    const avg = Math.round(results.reduce((s, r) => s + r.match, 0) / results.length);
+    const avg = results.length > 0 ? Math.round(results.reduce((s, r) => s + r.match, 0) / results.length) : 0;
     return (
       <div className="max-w-4xl">
-        <div className="border border-border bg-card rounded p-6 mb-6">
+        <div className="border border-border bg-card rounded-xl p-6 mb-6">
           <div className="text-xs uppercase tracking-widest text-muted-foreground">Your Score</div>
-          <div className="font-mono text-5xl font-bold text-primary mt-2">{avg}%</div>
+          <div className={`font-mono text-5xl font-bold mt-2 ${avg >= 60 ? "text-green-500" : avg >= 40 ? "text-yellow-500" : "text-red-500"}`}>{avg}%</div>
           <div className="text-sm text-muted-foreground mt-1">
             Average keyword match across {results.length} questions
           </div>
           <button
             onClick={() => setMode("config")}
-            className="mt-5 px-4 py-2 bg-primary text-primary-foreground rounded font-semibold text-sm hover:bg-primary/90"
+            className="mt-5 px-5 py-2 bg-primary text-primary-foreground rounded-lg font-semibold text-sm hover:bg-primary/90 transition-colors"
           >
             Retake Test
           </button>
@@ -112,27 +144,35 @@ export function PracticeTest() {
 
         <div className="space-y-3">
           {results.map((r, i) => (
-            <div key={i} className="border border-border bg-card rounded p-4">
-              <div className="flex justify-between gap-4 mb-3">
+            <div key={i} className="border border-border bg-card rounded-xl p-4">
+              <div className="flex justify-between gap-4 mb-2">
                 <div className="font-mono text-sm text-foreground flex-1">
                   Q{i + 1}. {r.question}
                 </div>
                 <span
-                  className={`font-mono text-sm font-semibold ${r.match >= 60 ? "text-primary" : "text-destructive"}`}
+                  className={`font-mono text-sm font-semibold shrink-0 ${r.match >= 60 ? "text-green-500" : r.match >= 40 ? "text-yellow-500" : "text-red-500"}`}
                 >
-                  Match: {r.match}%
+                  {r.match}%
                 </span>
               </div>
-              <div className="text-xs uppercase tracking-widest text-muted-foreground">
-                Your answer
+              <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden mb-3">
+                <div
+                  className={`h-full transition-all ${r.match >= 60 ? "bg-green-500" : r.match >= 40 ? "bg-yellow-500" : "bg-red-500"}`}
+                  style={{ width: `${r.match}%` }}
+                />
               </div>
-              <div className="font-mono text-sm text-foreground mb-2">
-                {r.given || <span className="text-muted-foreground italic">— blank —</span>}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-0.5">Your answer</div>
+                  <div className="font-mono text-sm text-foreground">
+                    {r.given || <span className="text-muted-foreground italic">— blank —</span>}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-0.5">Correct answer</div>
+                  <div className="font-mono text-sm text-muted-foreground">{r.correct}</div>
+                </div>
               </div>
-              <div className="text-xs uppercase tracking-widest text-muted-foreground">
-                Correct answer
-              </div>
-              <div className="font-mono text-sm text-muted-foreground">{r.correct}</div>
             </div>
           ))}
         </div>
@@ -174,10 +214,10 @@ export function PracticeTest() {
             />
             <button
               onClick={handleJoin}
-              disabled={joinCode.length < 4}
+              disabled={joinCode.length < 4 || isJoining}
               className="px-5 py-3 bg-primary text-primary-foreground rounded-lg font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
-              Join
+              {isJoining ? "Joining..." : "Join"}
             </button>
           </div>
           {joinError && <p className="text-xs text-destructive font-medium">{joinError}</p>}

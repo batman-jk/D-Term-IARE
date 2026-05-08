@@ -1,11 +1,4 @@
-/**
- * dtTestStore.ts
- * ─────────────────────────────────────────────────────────────────────────
- * Admin-managed DT Scheduled Exams.
- * Admin schedules an exam for a specific Department, Semester, and Subject
- * with a strict Start and End time.
- */
-
+import { supabase } from "@/lib/supabase";
 import type { Question } from "@/utils/mockData";
 
 export interface ScheduledExam {
@@ -22,34 +15,26 @@ export interface ScheduledExam {
   duration: number;     // minutes
 }
 
-const STORAGE_KEY = "dterm_dt_tests_scheduled";
+const mapExam = (row: any): ScheduledExam => ({
+  id: row.id,
+  department: row.department,
+  semester: row.semester,
+  subject: row.subject,
+  module: row.module,
+  startTime: row.start_time,
+  endTime: row.end_time,
+  createdBy: row.created_by,
+  createdAt: new Date(row.created_at).getTime(),
+  questions: typeof row.questions === "string" ? JSON.parse(row.questions) : row.questions,
+  duration: row.duration,
+});
 
-// ── Helpers ───────────────────────────────────────────────────────────────
-
-function load(): ScheduledExam[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as ScheduledExam[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function save(tests: ScheduledExam[]) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(tests));
-  } catch { /* ignore */ }
-}
-
-// ── State ─────────────────────────────────────────────────────────────────
-let tests: ScheduledExam[] = load();
 let listeners: (() => void)[] = [];
 
 function emit() {
   listeners.forEach((l) => l());
 }
 
-// ── Public API ────────────────────────────────────────────────────────────
 export const dtTestStore = {
   subscribe(cb: () => void) {
     listeners.push(cb);
@@ -58,21 +43,29 @@ export const dtTestStore = {
     };
   },
 
-  getTests(): ScheduledExam[] {
-    return tests;
+  async getTests(): Promise<ScheduledExam[]> {
+    const { data, error } = await supabase.from("scheduled_exams").select("*");
+    if (error || !data) return [];
+    return data.map(mapExam);
   },
 
-  getActiveTestsForStudent(department: string, semester: string): ScheduledExam[] {
+  async getActiveTestsForStudent(department: string, semester: string): Promise<ScheduledExam[]> {
+    const { data, error } = await supabase
+      .from("scheduled_exams")
+      .select("*")
+      .eq("department", department)
+      .eq("semester", semester);
+    
+    if (error || !data) return [];
+    
     const now = new Date();
-    return tests.filter(t => 
-      t.department === department && 
-      t.semester === semester && 
+    return data.map(mapExam).filter(t => 
       new Date(t.startTime) <= now && 
       new Date(t.endTime) >= now
     );
   },
 
-  createTest(params: {
+  async createTest(params: {
     department: string;
     semester: string;
     subject: string;
@@ -82,22 +75,31 @@ export const dtTestStore = {
     duration: number;
     questions: Question[];
     createdBy: string;
-  }): ScheduledExam {
-    const newTest: ScheduledExam = {
-      id: `dt-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      ...params,
-      createdAt: Date.now(),
-    };
+  }): Promise<{ ok: boolean; test?: ScheduledExam; error?: string }> {
+    const newTestId = `dt-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const { error } = await supabase.from("scheduled_exams").insert([{
+      id: newTestId,
+      department: params.department,
+      semester: params.semester,
+      subject: params.subject,
+      module: params.module,
+      start_time: params.startTime,
+      end_time: params.endTime,
+      duration: params.duration,
+      questions: params.questions,
+      created_by: params.createdBy,
+    }]);
 
-    tests = [newTest, ...tests];
-    save(tests);
+    if (error) return { ok: false, error: error.message };
+    
     emit();
-    return newTest;
+    return { ok: true, test: { ...params, id: newTestId, createdAt: Date.now() } };
   },
 
-  deleteTest(id: string): void {
-    tests = tests.filter((t) => t.id !== id);
-    save(tests);
+  async deleteTest(id: string): Promise<{ ok: boolean; error?: string }> {
+    const { error } = await supabase.from("scheduled_exams").delete().eq("id", id);
+    if (error) return { ok: false, error: error.message };
     emit();
+    return { ok: true };
   },
 };

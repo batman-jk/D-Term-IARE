@@ -1,6 +1,6 @@
-import { Question, QUESTIONS as INITIAL_QUESTIONS } from "./mockData";
+import { supabase } from "../lib/supabase";
+import { Question } from "./mockData";
 
-let questions = [...INITIAL_QUESTIONS];
 let listeners: Array<() => void> = [];
 
 function emitChange() {
@@ -9,53 +9,65 @@ function emitChange() {
   }
 }
 
-// Load from local storage on initial load
-try {
-  const stored = localStorage.getItem("dterm_questions");
-  if (stored) {
-    questions = JSON.parse(stored);
-  } else {
-    // Save initial to local storage if not present
-    localStorage.setItem("dterm_questions", JSON.stringify(questions));
-  }
-} catch (e) {
-  console.error("Failed to load questions from local storage", e);
-}
+// Map from Supabase row to Question
+const mapQuestion = (row: any): Question => ({
+  id: row.id,
+  course: row.course || undefined,
+  subject: row.subject || undefined,
+  module: row.module,
+  question: row.question,
+  answer: row.answer,
+  keywords: row.keywords || [],
+  fileId: row.file_id || undefined,
+});
 
 export const questionStore = {
-  addQuestions(newQuestions: Omit<Question, "id" | "fileId">[], fileId?: string) {
-    const questionsToAdd = newQuestions.map((q) => ({
-      ...q,
-      id: `m${q.module}-q${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      fileId,
-    }));
+  async addQuestions(newQuestions: Omit<Question, "id" | "fileId">[], fileId?: string): Promise<{ ok: boolean; error?: string }> {
+    const questionsToAdd = newQuestions.map((q) => {
+      // Ensure keywords is always a proper array of short, clean strings
+      let safeKeywords: string[] = [];
+      if (Array.isArray(q.keywords)) {
+        safeKeywords = q.keywords
+          .filter((k): k is string => typeof k === "string" && k.length < 100)
+          .map(k => k.trim())
+          .filter(Boolean);
+      } else if (typeof q.keywords === "string") {
+        // If Mistral returned a single string, split by commas
+        safeKeywords = (q.keywords as string).split(",").map(k => k.trim()).filter(k => k.length > 0 && k.length < 100);
+      }
 
-    questions = [...questions, ...questionsToAdd];
+      return {
+        id: crypto.randomUUID(),
+        module: String(q.module),
+        subject: q.subject || null,
+        course: q.course || null,
+        question: q.question,
+        answer: q.answer,
+        keywords: safeKeywords,
+        file_id: fileId || null,
+      };
+    });
 
-    try {
-      localStorage.setItem("dterm_questions", JSON.stringify(questions));
-    } catch (e) {
-      console.error("Failed to save questions to local storage", e);
-    }
-
+    const { error } = await supabase.from("questions").insert(questionsToAdd);
+    if (error) return { ok: false, error: error.message };
+    
     emitChange();
+    return { ok: true };
   },
 
   /** Remove all questions belonging to a specific file */
-  removeByFileId(fileId: string) {
-    questions = questions.filter((q) => q.fileId !== fileId);
-
-    try {
-      localStorage.setItem("dterm_questions", JSON.stringify(questions));
-    } catch (e) {
-      console.error("Failed to save questions to local storage", e);
-    }
-
+  async removeByFileId(fileId: string): Promise<{ ok: boolean; error?: string }> {
+    const { error } = await supabase.from("questions").delete().eq("file_id", fileId);
+    if (error) return { ok: false, error: error.message };
+    
     emitChange();
+    return { ok: true };
   },
 
-  getQuestions() {
-    return questions;
+  async getQuestions(): Promise<Question[]> {
+    const { data, error } = await supabase.from("questions").select("*");
+    if (error || !data) return [];
+    return data.map(mapQuestion);
   },
 
   subscribe(listener: () => void) {

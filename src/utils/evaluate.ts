@@ -1,7 +1,12 @@
-const API_KEY = "AIzaSyAfw_KA9sSQUU_Z6vfwAgP0uuqryA0eaHA";
+// ── evaluate.ts ─────────────────────────────────────────────────────────────
+const API_KEY = import.meta.env.VITE_MISTRAL_API_KEY as string | undefined;
 
 export async function evaluateAnswer(student: string, correct: string): Promise<number> {
   if (!correct || correct.trim() === "") return 0;
+  if (!API_KEY) {
+    console.error("VITE_MISTRAL_API_KEY is not configured. Add it to your .env.local file.");
+    return 0;
+  }
 
   const prompt = `
 You are an expert examiner. Evaluate the student's answer against the correct answer.
@@ -19,33 +24,30 @@ Output ONLY a single integer representing the percentage (0 to 100). Do not outp
 `;
 
   try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0,
-          },
-        }),
-      }
-    );
+    const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${API_KEY}`
+      },
+      body: JSON.stringify({
+        model: "mistral-small-latest",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0,
+      }),
+    });
 
     if (!response.ok) {
-      console.error("Gemini API error:", response.status, response.statusText);
+      console.error("Mistral API error:", response.status, response.statusText);
       return 0;
     }
 
     const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "0";
+    const text = data.choices?.[0]?.message?.content?.trim() || "0";
     const percentage = parseInt(text, 10);
     return isNaN(percentage) ? 0 : percentage;
   } catch (error) {
-    console.error("Gemini API request failed:", error);
+    console.error("Mistral API request failed:", error);
     return 0;
   }
 }

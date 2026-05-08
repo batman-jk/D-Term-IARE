@@ -1,4 +1,4 @@
-import { userStore } from "@/utils/userStore";
+import { supabase } from "@/lib/supabase";
 
 export interface CourseAssignment {
   id: string;
@@ -10,35 +10,18 @@ export interface CourseAssignment {
   facultyId: string;
 }
 
-const STORAGE_KEY = "dterm_course_assignments";
+const mapAssignment = (row: any): CourseAssignment => ({
+  id: row.id,
+  department: row.department,
+  semester: row.semester,
+  regulation: row.regulation,
+  section: row.section,
+  subject: row.subject,
+  facultyId: row.faculty_id,
+});
 
 class DepartmentStore {
-  private assignments: CourseAssignment[] = [];
   private listeners: Set<() => void> = new Set();
-
-  constructor() {
-    this.load();
-  }
-
-  private load() {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        this.assignments = JSON.parse(stored);
-      }
-    } catch (e) {
-      console.error("Failed to load course assignments", e);
-    }
-  }
-
-  private save() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.assignments));
-      this.notify();
-    } catch (e) {
-      console.error("Failed to save course assignments", e);
-    }
-  }
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -49,47 +32,55 @@ class DepartmentStore {
     this.listeners.forEach((l) => l());
   }
 
-  getAssignments = (): CourseAssignment[] => {
-    return this.assignments;
+  getAssignments = async (): Promise<CourseAssignment[]> => {
+    const { data, error } = await supabase.from("course_assignments").select("*");
+    if (error || !data) return [];
+    return data.map(mapAssignment);
   };
 
-  addAssignment = (data: Omit<CourseAssignment, "id">): { ok: boolean; error?: string } => {
-    // Check if faculty exists
-    const faculty = userStore.getUsers().find(u => u.id === data.facultyId && u.role === "Faculty");
-    if (!faculty) {
-      return { ok: false, error: "Invalid Faculty selected." };
-    }
-
-    const newAssignment: CourseAssignment = {
-      ...data,
-      id: crypto.randomUUID(),
-    };
+  addAssignment = async (data: Omit<CourseAssignment, "id">): Promise<{ ok: boolean; error?: string }> => {
+    const { error } = await supabase.from("course_assignments").insert([{
+      department: data.department,
+      semester: data.semester,
+      regulation: data.regulation,
+      section: data.section,
+      subject: data.subject,
+      faculty_id: data.facultyId,
+    }]);
     
-    this.assignments = [...this.assignments, newAssignment];
-    this.save();
+    if (error) {
+      if (error.code === '23503') return { ok: false, error: "Invalid Faculty selected." };
+      return { ok: false, error: error.message };
+    }
+    
+    this.notify();
     return { ok: true };
   };
 
-  deleteAssignment = (id: string): { ok: boolean; error?: string } => {
-    const prevLen = this.assignments.length;
-    this.assignments = this.assignments.filter((a) => a.id !== id);
-    if (this.assignments.length === prevLen) {
-      return { ok: false, error: "Assignment not found." };
-    }
-    this.save();
+  deleteAssignment = async (id: string): Promise<{ ok: boolean; error?: string }> => {
+    const { error } = await supabase.from("course_assignments").delete().eq("id", id);
+    if (error) return { ok: false, error: error.message };
+    
+    this.notify();
     return { ok: true };
   };
 
-  updateAssignment = (id: string, data: Omit<CourseAssignment, "id">): { ok: boolean; error?: string } => {
-    const faculty = userStore.getUsers().find(u => u.id === data.facultyId && u.role === "Faculty");
-    if (!faculty) {
-      return { ok: false, error: "Invalid Faculty selected." };
+  updateAssignment = async (id: string, data: Omit<CourseAssignment, "id">): Promise<{ ok: boolean; error?: string }> => {
+    const { error } = await supabase.from("course_assignments").update({
+      department: data.department,
+      semester: data.semester,
+      regulation: data.regulation,
+      section: data.section,
+      subject: data.subject,
+      faculty_id: data.facultyId,
+    }).eq("id", id);
+    
+    if (error) {
+      if (error.code === '23503') return { ok: false, error: "Invalid Faculty selected." };
+      return { ok: false, error: error.message };
     }
-
-    this.assignments = this.assignments.map(a => 
-      a.id === id ? { ...a, ...data } : a
-    );
-    this.save();
+    
+    this.notify();
     return { ok: true };
   };
 }

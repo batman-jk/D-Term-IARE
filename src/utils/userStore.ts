@@ -1,4 +1,4 @@
-import { GENERATED_FACULTY } from "./generatedData";
+import { supabase } from "../lib/supabase";
 
 export type UserRole = "Admin" | "Faculty" | "Student";
 
@@ -15,101 +15,90 @@ export interface AppUser {
   firstLogin?: boolean;
 }
 
-const STORAGE_KEY = "dterm_users";
-
-// ── Predefined seed users ─────────────────────────────────────────────────────
-const SEED_USERS: AppUser[] = [
-  {
-    id: "admin-root",
-    username: "D-TERM-IARE",
-    password: "defter",
-    role: "Admin",
-    displayName: "D-Term Admin",
-  },
-  ...GENERATED_FACULTY
-];
-
-// ── In-memory state ───────────────────────────────────────────────────────────
-let users: AppUser[] = (() => {
-  if (typeof window === "undefined") return [...SEED_USERS];
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      const parsed: AppUser[] = JSON.parse(stored);
-      // Always ensure the root admin exists and can't be removed from storage
-      const hasRoot = parsed.some((u) => u.id === "admin-root");
-      return hasRoot ? parsed : [SEED_USERS[0], ...parsed];
-    }
-  } catch {
-    /* ignore */
-  }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(SEED_USERS));
-  return [...SEED_USERS];
-})();
+// Map from Supabase row to AppUser
+const mapUser = (row: any): AppUser => ({
+  id: row.id,
+  username: row.username,
+  password: row.password,
+  role: row.role as UserRole,
+  displayName: row.display_name,
+  department: row.department || undefined,
+  sem: row.sem || undefined,
+  section: row.section || undefined,
+  subject: row.subject || undefined,
+  firstLogin: row.first_login,
+});
 
 let listeners: Array<() => void> = [];
-
-function persist() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(users));
-  } catch {
-    /* ignore */
-  }
-}
 
 function emit() {
   listeners.forEach((l) => l());
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
 export const userStore = {
-  /** Authenticate — returns the user if credentials match, null otherwise. */
-  authenticate(username: string, password: string): AppUser | null {
-    return (
-      users.find(
-        (u) =>
-          u.username.toLowerCase() === username.toLowerCase() &&
-          u.password === password,
-      ) ?? null
-    );
+  async authenticate(username: string, password: string): Promise<AppUser | null> {
+    const { data, error } = await supabase
+      .from("users")
+      .select("*")
+      .ilike("username", username)
+      .eq("password", password)
+      .maybeSingle();
+
+    if (error || !data) return null;
+    return mapUser(data);
   },
 
-  getUsers(): AppUser[] {
-    return users;
+  async getUsers(): Promise<AppUser[]> {
+    const { data, error } = await supabase.from("users").select("*");
+    if (error || !data) return [];
+    return data.map(mapUser);
   },
 
-  addUser(user: Omit<AppUser, "id">): { ok: boolean; error?: string } {
-    const exists = users.some(
-      (u) => u.username.toLowerCase() === user.username.toLowerCase(),
-    );
-    if (exists) return { ok: false, error: "Username already exists." };
-    const newUser: AppUser = {
-      ...user,
+  async addUser(user: Omit<AppUser, "id">): Promise<{ ok: boolean; error?: string }> {
+    const newUser = {
       id: `user-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      username: user.username,
+      password: user.password,
+      role: user.role,
+      display_name: user.displayName,
+      department: user.department || null,
+      sem: user.sem || null,
+      section: user.section || null,
+      subject: user.subject || null,
+      first_login: user.firstLogin !== undefined ? user.firstLogin : true,
     };
-    users = [...users, newUser];
-    persist();
+
+    const { error } = await supabase.from("users").insert([newUser]);
+    if (error) {
+      if (error.code === '23505') {
+         return { ok: false, error: "Username already exists." };
+      }
+      return { ok: false, error: error.message };
+    }
     emit();
     return { ok: true };
   },
 
-  updateUser(
+  async updateUser(
     id: string,
     patch: Partial<Pick<AppUser, "password" | "displayName" | "role" | "firstLogin">>,
-  ): { ok: boolean; error?: string } {
-    const idx = users.findIndex((u) => u.id === id);
-    if (idx === -1) return { ok: false, error: "User not found." };
-    users = users.map((u) => (u.id === id ? { ...u, ...patch } : u));
-    persist();
+  ): Promise<{ ok: boolean; error?: string }> {
+    const updateData: any = {};
+    if (patch.password !== undefined) updateData.password = patch.password;
+    if (patch.displayName !== undefined) updateData.display_name = patch.displayName;
+    if (patch.role !== undefined) updateData.role = patch.role;
+    if (patch.firstLogin !== undefined) updateData.first_login = patch.firstLogin;
+
+    const { error } = await supabase.from("users").update(updateData).eq("id", id);
+    if (error) return { ok: false, error: error.message };
     emit();
     return { ok: true };
   },
 
-  deleteUser(id: string): { ok: boolean; error?: string } {
-    if (id === "admin-root")
-      return { ok: false, error: "Cannot delete the root admin." };
-    users = users.filter((u) => u.id !== id);
-    persist();
+  async deleteUser(id: string): Promise<{ ok: boolean; error?: string }> {
+    if (id === "admin-root") return { ok: false, error: "Cannot delete the root admin." };
+    const { error } = await supabase.from("users").delete().eq("id", id);
+    if (error) return { ok: false, error: error.message };
     emit();
     return { ok: true };
   },

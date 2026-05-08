@@ -15,15 +15,15 @@ function emitChange() {
   }
 }
 
-try {
-  const stored = localStorage.getItem("dterm_uploaded_files");
-  if (stored) {
-    files = JSON.parse(stored);
-  } else {
-    // initialize with mock data structure if needed, or leave empty
+if (typeof localStorage !== "undefined") {
+  try {
+    const stored = localStorage.getItem("dterm_uploaded_files");
+    if (stored) {
+      files = JSON.parse(stored);
+    }
+  } catch (e) {
+    console.error("Failed to load files from local storage", e);
   }
-} catch (e) {
-  console.error("Failed to load files from local storage", e);
 }
 
 export const fileStore = {

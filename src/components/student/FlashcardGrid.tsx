@@ -1,8 +1,8 @@
 import { useState } from "react";
 import type { Question } from "@/utils/mockData";
 import { BookOpen, Cpu, Loader2 } from "lucide-react";
-import { generateFlashcards } from "@/services/geminiService";
-import type { GeminiFlashcard } from "@/services/geminiService";
+import { generateFlashcards } from "@/services/mistralService";
+import type { MistralFlashcard } from "@/services/mistralService";
 
 const DIFFICULTY_LABELS = ["EASY", "MEDIUM", "HARD"] as const;
 type Difficulty = (typeof DIFFICULTY_LABELS)[number];
@@ -14,7 +14,7 @@ function getDifficulty(q: Question): Difficulty {
   return "HARD";
 }
 
-/** Works for both Question and GeminiFlashcard */
+/** Works for both Question and MistralFlashcard */
 function getDifficultyAny(c: { difficulty?: string; answer?: string }): Difficulty {
   if (c.difficulty && ["EASY", "MEDIUM", "HARD"].includes(c.difficulty)) {
     return c.difficulty as Difficulty;
@@ -48,7 +48,7 @@ export function FlashcardGrid({
 }) {
   const [flippedId, setFlippedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<Difficulty | "ALL">("ALL");
-  const [aiCards, setAiCards] = useState<GeminiFlashcard[]>([]);
+  const [aiCards, setAiCards] = useState<MistralFlashcard[]>([]);
   const [generating, setGenerating] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
@@ -66,7 +66,7 @@ export function FlashcardGrid({
     }
   };
 
-  // Unified card type that works for both Question and GeminiFlashcard
+  // Unified card type that works for both Question and MistralFlashcard
   type DisplayCard = {
     id: string;
     question: string;

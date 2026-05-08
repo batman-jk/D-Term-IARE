@@ -2,7 +2,7 @@
  * NotesView.tsx
  * ─────────────────────────────────────────────────────────────────────────
  * AI-generated lecture notes for a selected subject + module.
- * Calls geminiService.generateNotes() and displays structured content.
+ * Calls mistralService.generateNotes() and displays structured content.
  * Results are cached in localStorage so the student doesn't re-generate.
  */
 
@@ -11,8 +11,8 @@ import {
   BookOpen, Lightbulb, HelpCircle, List, Loader2,
   RefreshCw, ChevronDown, ChevronRight, Cpu, FileText,
 } from "lucide-react";
-import { generateNotes, clearNotesCache } from "@/services/geminiService";
-import type { GeminiNotes } from "@/services/geminiService";
+import { generateNotes, clearNotesCache } from "@/services/mistralService";
+import type { MistralNotes } from "@/services/mistralService";
 
 interface Props {
   subject: string;
@@ -22,7 +22,7 @@ interface Props {
 type SectionKey = "overview" | "concepts" | "explanations" | "definitions" | "examQuestions" | "summary";
 
 export function NotesView({ subject, module }: Props) {
-  const [notes, setNotes] = useState<GeminiNotes | null>(null);
+  const [notes, setNotes] = useState<MistralNotes | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [openSections, setOpenSections] = useState<Set<SectionKey>>(
@@ -50,7 +50,7 @@ export function NotesView({ subject, module }: Props) {
       setError(
         e instanceof Error
           ? e.message
-          : "Failed to generate notes. Check your Gemini API key."
+          : "Failed to generate notes. Check your Mistral API key."
       );
     } finally {
       setLoading(false);
@@ -78,7 +78,7 @@ export function NotesView({ subject, module }: Props) {
         <div className="text-center">
           <h3 className="text-xl font-bold text-foreground mb-1">AI Lecture Notes</h3>
           <p className="text-sm text-muted-foreground max-w-xs">
-            Generate structured notes for <span className="text-primary font-semibold">{subject}</span> · Module <span className="text-primary font-semibold">{module}</span> using Gemini AI.
+            Generate structured notes for <span className="text-primary font-semibold">{subject}</span> · Module <span className="text-primary font-semibold">{module}</span> using Mistral AI.
           </p>
         </div>
         <button
@@ -97,7 +97,7 @@ export function NotesView({ subject, module }: Props) {
       <div className="flex flex-col items-center justify-center py-20 gap-4">
         <Loader2 className="w-10 h-10 text-primary animate-spin" />
         <p className="text-sm text-muted-foreground font-medium">
-          Gemini is generating lecture notes for <span className="text-primary">{subject} · Module {module}</span>…
+          Mistral is generating lecture notes for <span className="text-primary">{subject} · Module {module}</span>…
         </p>
         <p className="text-xs text-muted-foreground">This may take 10–20 seconds.</p>
       </div>

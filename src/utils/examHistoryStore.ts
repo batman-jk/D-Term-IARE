@@ -1,3 +1,5 @@
+import { supabase } from "@/lib/supabase";
+
 export interface ExamRecord {
   id: string;
   type: "practice" | "dt";
@@ -10,45 +12,64 @@ export interface ExamRecord {
   results: { question: string; correct: string; given: string; match: number }[];
 }
 
-const KEY = "dterm_exam_history";
-
-function load(): ExamRecord[] {
-  try {
-    const raw = localStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as ExamRecord[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function save(records: ExamRecord[]) {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(records));
-  } catch { /* ignore */ }
-}
-
-let records: ExamRecord[] = load();
 let listeners: (() => void)[] = [];
 
 function emit() { listeners.forEach(l => l()); }
+
+const mapRecord = (row: any): ExamRecord => ({
+  id: row.id,
+  type: row.type as "practice" | "dt",
+  course: row.course,
+  startedAt: Number(row.started_at),
+  endedAt: Number(row.ended_at),
+  questionsTotal: row.questions_total,
+  questionsAttempted: row.questions_attempted,
+  score: row.score,
+  results: typeof row.results === "string" ? JSON.parse(row.results) : row.results,
+});
 
 export const examHistory = {
   subscribe(cb: () => void) {
     listeners.push(cb);
     return () => { listeners = listeners.filter(l => l !== cb); };
   },
-  getRecords() { return records; },
 
-  addRecord(record: Omit<ExamRecord, "id">) {
-    const newRecord: ExamRecord = { ...record, id: `exam-${Date.now()}` };
-    records = [newRecord, ...records].slice(0, 100); // keep last 100
-    save(records);
-    emit();
+  async getRecords(studentId: string): Promise<ExamRecord[]> {
+    const { data, error } = await supabase
+      .from("exam_history")
+      .select("*")
+      .eq("user_id", studentId)
+      .order("started_at", { ascending: false });
+
+    if (error || !data) return [];
+    return data.map(mapRecord);
   },
 
-  clearAll() {
-    records = [];
-    save(records);
+  async addRecord(studentId: string, record: Omit<ExamRecord, "id">): Promise<{ ok: boolean; error?: string }> {
+    const { error } = await supabase.from("exam_history").insert([{
+      id: crypto.randomUUID(),
+      user_id: studentId,
+      type: record.type,
+      course: record.course,
+      started_at: record.startedAt,
+      ended_at: record.endedAt,
+      questions_total: record.questionsTotal,
+      questions_attempted: record.questionsAttempted,
+      score: record.score,
+      results: record.results,
+    }]);
+
+    if (error) return { ok: false, error: error.message };
+    
     emit();
+    return { ok: true };
+  },
+
+  async clearAll(studentId: string): Promise<{ ok: boolean; error?: string }> {
+    const { error } = await supabase.from("exam_history").delete().eq("user_id", studentId);
+    if (error) return { ok: false, error: error.message };
+    
+    emit();
+    return { ok: true };
   },
 };

@@ -1,4 +1,5 @@
-import { useState, useRef, useSyncExternalStore } from "react";
+import { useState, useRef, useSyncExternalStore, useEffect } from "react";
+import { useStoreAsync } from "@/hooks/useStoreAsync";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { questionStore } from "@/utils/questionStore";
@@ -9,6 +10,8 @@ import { Sidebar } from "@/components/Sidebar";
 import { MOCK_RESOURCES, MOCK_FACULTY_RESULTS, COURSES } from "@/utils/mockData";
 import type { AppUser } from "@/utils/userStore";
 import { departmentStore } from "@/services/departmentStore";
+import { marksStore } from "@/services/marksStore";
+import { mistralService } from "@/services/mistralService";
 
 const NAV = [
   { key: "home", label: "Home", icon: Home },
@@ -26,6 +29,29 @@ export function FacultyDashboard({
 }) {
   const [tab, setTab] = useState("home");
 
+  // Real data for stats
+  const files = useSyncExternalStore(fileStore.subscribe, fileStore.getFiles, fileStore.getFiles);
+  const assignments = useStoreAsync(departmentStore.subscribe, departmentStore.getAssignments, []).filter(a => 
+    a.facultyId === user.id || a.facultyId === user.username || a.facultyId === user.displayName
+  );
+  const assignedSubjects = Array.from(new Set([
+    ...assignments.map(a => a.subject),
+    user.subject
+  ].filter(Boolean) as string[]));
+
+  const facultyFiles = files.filter(f => assignedSubjects.includes(f.course));
+  
+  const marks = useStoreAsync(marksStore.subscribe, marksStore.getAll, []);
+  const facultyMarks = marks.filter(m => 
+    m.testType === "practice" && 
+    assignedSubjects.includes(m.subject) &&
+    m.notes === "Joined via faculty code"
+  );
+
+  const avgScore = facultyMarks.length > 0 
+    ? Math.round(facultyMarks.reduce((acc, m) => acc + m.score, 0) / facultyMarks.length)
+    : 0;
+
   return (
     <div className="min-h-screen flex bg-background">
       <Sidebar
@@ -37,26 +63,38 @@ export function FacultyDashboard({
         onLogout={onLogout}
       />
       <main className="flex-1 p-8 overflow-auto">
-        {tab === "home" && <HomeTab name={user.displayName} />}
+        {tab === "home" && (
+          <HomeTab 
+            name={user.displayName} 
+            resourceCount={facultyFiles.length}
+            testCount={facultyMarks.length}
+            avgScore={avgScore}
+          />
+        )}
         {tab === "upload" && <UploadTab user={user} />}
         {tab === "conduct" && <ConductTab user={user} />}
-        {tab === "results" && <ResultsTab />}
+        {tab === "results" && <ResultsTab user={user} />}
       </main>
     </div>
   );
 }
 
-function HomeTab({ name }: { name: string }) {
+function HomeTab({ name, resourceCount, testCount, avgScore }: { 
+  name: string;
+  resourceCount: number;
+  testCount: number;
+  avgScore: number;
+}) {
   return (
     <div>
       <h1 className="font-mono text-3xl text-foreground">Welcome, {name}</h1>
       <p className="text-sm text-muted-foreground mt-1">
         Manage your resources, practice tests, and class results.
       </p>
-      <div className="grid grid-cols-3 gap-4 mt-6 max-w-3xl">
-        <Stat label="Resources Uploaded" value="12" />
-        <Stat label="Tests Conducted" value="5" />
-        <Stat label="Avg Class Score" value="74%" />
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6 max-w-3xl">
+        <Stat label="Resources Uploaded" value={String(resourceCount)} />
+        <Stat label="Tests Conducted" value={String(testCount)} />
+        <Stat label="Avg Class Score" value={`${avgScore}%`} />
       </div>
     </div>
   );
@@ -73,8 +111,9 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function UploadTab({ user }: { user: AppUser }) {
   const files = useSyncExternalStore(fileStore.subscribe, fileStore.getFiles, fileStore.getFiles);
-  
-  const assignments = departmentStore.getAssignments().filter(a => a.facultyId === user.id);
+  const assignments = useStoreAsync(departmentStore.subscribe, departmentStore.getAssignments, []).filter(a => 
+    a.facultyId === user.id || a.facultyId === user.username || a.facultyId === user.displayName
+  );
   // Also include the generic subject if the faculty was given a legacy 'subject' field
   const assignedSubjects = Array.from(new Set([
     ...assignments.map(a => a.subject),
@@ -88,6 +127,12 @@ function UploadTab({ user }: { user: AppUser }) {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (subjectsToPick.length > 0 && !subjectsToPick.includes(course)) {
+      setCourse(subjectsToPick[0]);
+    }
+  }, [subjectsToPick, course]);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -111,7 +156,7 @@ function UploadTab({ user }: { user: AppUser }) {
         
         // Actually read and parse the file
         const reader = new FileReader();
-        reader.onload = (evt) => {
+        reader.onload = async (evt) => {
           try {
             console.log("File loaded, starting to parse...");
             const data = new Uint8Array(evt.target?.result as ArrayBuffer);
@@ -123,34 +168,28 @@ function UploadTab({ user }: { user: AppUser }) {
               XLSX.utils.sheet_to_json<Record<string, string | number | boolean | null>>(ws);
             console.log("Parsed JSON Data:", jsonData);
 
-            const newQuestions = jsonData
+            let parsedRows;
+            try {
+              parsedRows = await mistralService.parseSpreadsheet(jsonData);
+              console.log("Mistral extracted questions:", parsedRows);
+            } catch (aiErr: any) {
+              console.error("Mistral parsing failed:", aiErr);
+              toast.error(`AI parsing failed: ${aiErr?.message || "Unknown error"}`);
+              setIsUploading(false);
+              return;
+            }
+
+            const newQuestions = parsedRows
               .flatMap((row) => {
-                const normalizedRow: Record<string, string | number | boolean | null> = {};
-                for (const key in row) {
-                  normalizedRow[key.toLowerCase().trim()] = row[key];
-                }
-                
-                const rawModule =
-                  normalizedRow.module ??
-                  normalizedRow.modulename ??
-                  normalizedRow.module_name;
+                if (modules.length === 0) return [];
 
-                const targetModules = (rawModule !== null && rawModule !== undefined && typeof rawModule !== "boolean")
-                  ? [rawModule]
-                  : modules;
-
-                if (targetModules.length === 0) return [];
-
-                return targetModules.map((mod) => ({
-                  course: String(normalizedRow.course || normalizedRow.subject || wsname || course),
-                  subject: String(normalizedRow.subject || normalizedRow.course || wsname || course),
+                return modules.map((mod) => ({
+                  course: course,
+                  subject: course,
                   module: mod,
-                  question: String(normalizedRow.question ?? ""),
-                  answer: String(normalizedRow.answer ?? ""),
-                  keywords:
-                    typeof normalizedRow.keywords === "string"
-                      ? normalizedRow.keywords.split(",").map((k) => k.trim())
-                      : [],
+                  question: row.question,
+                  answer: row.answer,
+                  keywords: row.keywords || [],
                 }));
               })
               .filter((q) => q.question && q.answer);
@@ -159,7 +198,13 @@ function UploadTab({ user }: { user: AppUser }) {
 
             if (newQuestions.length > 0) {
               const fileId = `${Date.now()}`;
-              questionStore.addQuestions(newQuestions, fileId);
+              const { ok, error } = await questionStore.addQuestions(newQuestions, fileId);
+              if (!ok) {
+                console.error("Failed to add questions to DB:", error);
+                toast.error(`Database error: ${error}`);
+                setIsUploading(false);
+                return;
+              }
               toast.success(`✓ ${newQuestions.length} questions added to ${course} · Module(s) ${modules.join(", ")}`);
               fileStore.addFile({
                 id: fileId,
@@ -189,10 +234,10 @@ function UploadTab({ user }: { user: AppUser }) {
     }, intervalTime);
   };
 
-  const deleteFile = (id: string) => {
+  const deleteFile = async (id: string) => {
     const target = files.find((f) => f.id === id);
     if (target) {
-      questionStore.removeByFileId(id);
+      await questionStore.removeByFileId(id);
     }
     fileStore.removeFile(id);
     toast.success(
@@ -270,7 +315,7 @@ function UploadTab({ user }: { user: AppUser }) {
         <div className="w-full max-w-3xl border-2 border-border rounded p-10 flex flex-col items-center justify-center bg-muted/20 mb-8">
           <Loader2 className="w-10 h-10 text-primary animate-spin mb-4" />
           <div className="text-foreground font-mono mb-2">
-            Uploading resources for <span className="text-primary">{course}</span>...
+            Mistral AI is analyzing <span className="text-primary">{course}</span>...
           </div>
           <div className="w-64 h-2 bg-muted rounded-full overflow-hidden">
             <div 
@@ -355,21 +400,33 @@ function UploadTab({ user }: { user: AppUser }) {
 }
 
 function ConductTab({ user }: { user: AppUser }) {
-  const storeQuestions = questionStore.getQuestions();
+  const storeQuestions = useStoreAsync(questionStore.subscribe, questionStore.getQuestions, []);
   
-  const assignments = departmentStore.getAssignments().filter(a => a.facultyId === user.id);
+  const assignments = useStoreAsync(departmentStore.subscribe, departmentStore.getAssignments, []).filter(a => 
+    a.facultyId === user.id || a.facultyId === user.username || a.facultyId === user.displayName
+  );
   const assignedSubjects = Array.from(new Set([
     ...assignments.map(a => a.subject),
     user.subject
   ].filter(Boolean) as string[]));
   
-  const subjectsToPick = assignedSubjects.length > 0 ? assignedSubjects : Array.from(new Set(storeQuestions.map(q => q.subject || q.course || "General"))).filter(Boolean);
+  const subjectsToPick = assignedSubjects.length > 0 ? assignedSubjects : COURSES;
   
   const [subject, setSubject] = useState(subjectsToPick[0] || COURSES[0]);
   const [modules, setModules] = useState<Array<number | string>>([]);
   const [duration, setDuration] = useState(15);
   const [code, setCode] = useState<string | null>(null);
   const [createdConfig, setCreatedConfig] = useState<ReturnType<typeof practiceTestStore.createTest> | null>(null);
+
+  const [source, setSource] = useState<"existing" | "upload">("existing");
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (subjectsToPick.length > 0 && !subjectsToPick.includes(subject)) {
+      setSubject(subjectsToPick[0]);
+    }
+  }, [subjectsToPick, subject]);
 
   const toggle = (m: number | string) =>
     setModules((prev) => (prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]));
@@ -386,21 +443,84 @@ function ConductTab({ user }: { user: AppUser }) {
     modules.length === 0 || selectedModuleStrings.includes(String(q.module))
   );
 
-  const launch = () => {
+  const handleInlineUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const wb = XLSX.read(data, { type: "array" });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const jsonData = XLSX.utils.sheet_to_json<Record<string, string | number | boolean | null>>(ws);
+
+        let parsedRows;
+        try {
+          parsedRows = await mistralService.parseSpreadsheet(jsonData);
+        } catch (aiErr) {
+          toast.error("Mistral parsing failed.");
+          setIsUploading(false);
+          return;
+        }
+
+        const newQuestions = parsedRows
+          .flatMap((row) => {
+            if (modules.length === 0) return [];
+            return modules.map((mod) => ({
+              course: subject,
+              subject: subject,
+              module: mod,
+              question: row.question,
+              answer: row.answer,
+              keywords: row.keywords || [],
+            }));
+          })
+          .filter((q) => q.question && q.answer);
+
+        if (newQuestions.length > 0) {
+          const fileId = `${Date.now()}`;
+          await questionStore.addQuestions(newQuestions, fileId);
+          fileStore.addFile({
+            id: fileId, filename: file.name, course: subject,
+            module: modules.join(", ") || "All", date: new Date().toISOString().slice(0, 10),
+          });
+          toast.success(`✓ ${newQuestions.length} questions uploaded. You can now launch the test!`);
+          setSource("existing"); // Switch back so they can launch
+        } else {
+          toast.error("No valid questions found in file.");
+        }
+      } catch (err) {
+        toast.error("Failed to parse file.");
+      }
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const launch = async () => {
     if (testQuestions.length === 0) {
       toast.error("No questions available. Upload flashcards for this subject first.");
       return;
     }
-    const config = practiceTestStore.createTest({
+    const result = await practiceTestStore.createTest({
       subject,
       modules: modules.length > 0 ? modules.map(String) : ["All"],
       duration,
       questions: testQuestions,
-      createdBy: "Faculty",
+      createdBy: user.displayName,
     });
-    setCode(config.code);
-    setCreatedConfig(config);
-    toast.success(`Practice test launched! Code: ${config.code}`);
+    
+    if (result.ok && result.test) {
+      setCode(result.test.code);
+      setCreatedConfig(result.test as any);
+      toast.success(`Practice test launched! Code: ${result.test.code}`);
+    } else {
+      toast.error(result.error || "Failed to launch practice test.");
+    }
   };
 
   return (
@@ -470,12 +590,45 @@ function ConductTab({ user }: { user: AppUser }) {
           />
         </div>
 
-        <button
-          onClick={launch}
-          className="w-full bg-primary text-primary-foreground py-2.5 rounded font-semibold hover:bg-primary/90"
-        >
-          Launch Practice Test
-        </button>
+        <div className="pt-2">
+          <label className="block text-xs uppercase tracking-widest text-muted-foreground mb-2">
+            Questions Source
+          </label>
+          <div className="flex gap-6 p-3 border border-border rounded-lg bg-muted/20">
+            <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
+              <input type="radio" checked={source === "existing"} onChange={() => setSource("existing")} className="text-primary accent-primary" />
+              Use Previously Uploaded
+            </label>
+            <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
+              <input type="radio" checked={source === "upload"} onChange={() => setSource("upload")} className="text-primary accent-primary" />
+              Upload New Sheet
+            </label>
+          </div>
+        </div>
+
+        {source === "upload" && (
+          <div className="border border-dashed border-primary/50 bg-primary/5 rounded-lg p-6 text-center">
+            <input type="file" accept=".csv,.xlsx" className="hidden" ref={fileInputRef} onChange={handleInlineUpload} />
+            <FileUp className="w-8 h-8 text-primary/60 mx-auto mb-2" />
+            <p className="text-sm text-foreground mb-3">Upload a fresh set of flashcards for this practice test.</p>
+            <button 
+              onClick={() => fileInputRef.current?.click()} 
+              disabled={isUploading}
+              className="bg-primary text-primary-foreground px-4 py-2 rounded text-sm font-semibold hover:bg-primary/90 disabled:opacity-50"
+            >
+              {isUploading ? "Uploading & Parsing..." : "Select Excel/CSV File"}
+            </button>
+          </div>
+        )}
+
+        {source === "existing" && (
+          <button
+            onClick={launch}
+            className="w-full bg-primary text-primary-foreground py-2.5 rounded font-semibold hover:bg-primary/90"
+          >
+            Launch Practice Test
+          </button>
+        )}
 
         {code && createdConfig && (
           <div className="border border-primary bg-primary/10 rounded p-4 text-center space-y-1">
@@ -493,32 +646,61 @@ function ConductTab({ user }: { user: AppUser }) {
   );
 }
 
-function ResultsTab() {
+function ResultsTab({ user }: { user: AppUser }) {
+  const marks = useStoreAsync(marksStore.subscribe, marksStore.getAll, []);
+  
+  // Get faculty's assigned subjects
+  const assignments = useStoreAsync(departmentStore.subscribe, departmentStore.getAssignments, []).filter(a => 
+    a.facultyId === user.id || a.facultyId === user.username || a.facultyId === user.displayName
+  );
+  const assignedSubjects = Array.from(new Set([
+    ...assignments.map(a => a.subject),
+    user.subject
+  ].filter(Boolean) as string[]));
+
+  // Filter marks: must be "practice" and subject must match faculty's subjects
+  const filtered = marks.filter(m => 
+    m.testType === "practice" && 
+    assignedSubjects.includes(m.subject) &&
+    m.notes === "Joined via faculty code" // Only show joined tests as requested
+  );
+
   return (
     <div>
-      <h1 className="font-mono text-3xl text-foreground">Test Results</h1>
+      <h1 className="font-mono text-3xl text-foreground">Practice Test Results</h1>
       <p className="text-sm text-muted-foreground mt-1 mb-6">
-        Results from practice tests you created. (No access to DT exam results.)
+        Live results from students who joined your practice tests via code.
       </p>
-      <div className="border border-border bg-card rounded overflow-hidden max-w-3xl">
+      <div className="border border-border bg-card rounded-xl overflow-hidden max-w-4xl">
         <table className="w-full text-sm">
           <thead className="bg-muted">
             <tr className="text-left text-xs uppercase tracking-widest text-muted-foreground">
               <th className="px-4 py-3">Student</th>
-              <th className="px-4 py-3">Course</th>
+              <th className="px-4 py-3">Subject</th>
               <th className="px-4 py-3">Score</th>
               <th className="px-4 py-3">Date</th>
             </tr>
           </thead>
           <tbody>
-            {MOCK_FACULTY_RESULTS.map((r, i) => (
-              <tr key={i} className="border-t border-border">
-                <td className="px-4 py-3">{r.student}</td>
-                <td className="px-4 py-3">{r.course}</td>
-                <td className="px-4 py-3 font-mono text-primary">{r.score}%</td>
-                <td className="px-4 py-3 text-muted-foreground">{r.date}</td>
+            {filtered.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground italic">
+                  No joined practice results found yet.
+                </td>
               </tr>
-            ))}
+            ) : (
+              filtered.map((r, i) => (
+                <tr key={r.id || i} className="border-t border-border hover:bg-muted/40 transition-colors">
+                  <td className="px-4 py-3">
+                    <div className="font-semibold">{r.studentName}</div>
+                    <div className="text-[10px] font-mono text-muted-foreground">{r.studentUsername}</div>
+                  </td>
+                  <td className="px-4 py-3 text-xs">{r.subject}</td>
+                  <td className="px-4 py-3 font-mono font-bold text-primary">{r.score}%</td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs">{r.date}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>

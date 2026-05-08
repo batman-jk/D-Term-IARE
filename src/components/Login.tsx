@@ -16,7 +16,7 @@ export function Login({ onLogin }: { onLogin: (user: AppUser) => void }) {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     if (!username.trim() || !password) {
@@ -24,23 +24,21 @@ export function Login({ onLogin }: { onLogin: (user: AppUser) => void }) {
       return;
     }
     setLoading(true);
-    // Brief artificial delay for UX
-    setTimeout(() => {
-      const user = userStore.authenticate(username.trim(), password);
-      setLoading(false);
-      if (user) {
-        if (user.firstLogin) {
-          setRequirePasswordChange(user);
-        } else {
-          onLogin(user);
-        }
+    
+    const user = await userStore.authenticate(username.trim(), password);
+    setLoading(false);
+    if (user) {
+      if (user.firstLogin) {
+        setRequirePasswordChange(user);
       } else {
-        setError("Invalid username or password.");
+        onLogin(user);
       }
-    }, 400);
+    } else {
+      setError("Invalid username or password.");
+    }
   };
 
-  const submitPasswordChange = (e: React.FormEvent) => {
+  const submitPasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     if (!newPassword || !confirmPassword) {
@@ -58,21 +56,18 @@ export function Login({ onLogin }: { onLogin: (user: AppUser) => void }) {
     
     if (requirePasswordChange) {
       setLoading(true);
-      setTimeout(() => {
-        userStore.updateUser(requirePasswordChange.id, { 
-          password: newPassword,
-          firstLogin: false 
-        });
-        
-        // Retrieve updated user to pass to onLogin
-        const updatedUser = userStore.getUsers().find(u => u.id === requirePasswordChange.id);
-        setLoading(false);
-        if (updatedUser) {
-          onLogin(updatedUser);
-        } else {
-          setError("Failed to update password.");
-        }
-      }, 400);
+      
+      const { ok, error: updateError } = await userStore.updateUser(requirePasswordChange.id, { 
+        password: newPassword,
+        firstLogin: false 
+      });
+      
+      setLoading(false);
+      if (ok) {
+        onLogin({ ...requirePasswordChange, password: newPassword, firstLogin: false });
+      } else {
+        setError(updateError || "Failed to update password.");
+      }
     }
   };
 

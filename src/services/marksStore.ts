@@ -1,11 +1,4 @@
-/**
- * marksStore.ts
- * ─────────────────────────────────────────────────────────────────────────
- * Admin-only student marks registry.
- * Sources:
- *   1. Auto-recorded from exam results (examHistoryStore)
- *   2. Manually imported via Excel upload
- */
+import { supabase } from "@/lib/supabase";
 
 export interface StudentMark {
   id: string;
@@ -21,33 +14,26 @@ export interface StudentMark {
   notes?: string;
 }
 
-const STORAGE_KEY = "dterm_marks";
-
-// ── Helpers ───────────────────────────────────────────────────────────────
-function load(): StudentMark[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as StudentMark[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function save(marks: StudentMark[]) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(marks));
-  } catch { /* ignore */ }
-}
-
-// ── State ─────────────────────────────────────────────────────────────────
-let marks: StudentMark[] = load();
 let listeners: (() => void)[] = [];
 
 function emit() {
   listeners.forEach((l) => l());
 }
 
-// ── Public API ────────────────────────────────────────────────────────────
+const mapMark = (row: any): StudentMark => ({
+  id: row.id,
+  studentUsername: row.student_username,
+  studentName: row.student_name,
+  department: row.department || "",
+  sem: row.sem || "",
+  section: row.section || "",
+  subject: row.subject || "",
+  testType: row.test_type as "dt" | "practice" | "imported",
+  score: Number(row.score),
+  date: row.date,
+  notes: row.notes || undefined,
+});
+
 export const marksStore = {
   subscribe(cb: () => void) {
     listeners.push(cb);
@@ -56,73 +42,99 @@ export const marksStore = {
     };
   },
 
-  /** Admin: get all marks across all students */
-  getAll(): StudentMark[] {
-    return marks;
+  async getAll(): Promise<StudentMark[]> {
+    const { data, error } = await supabase.from("student_marks").select("*");
+    if (error || !data) return [];
+    return data.map(mapMark);
   },
 
-  /** Student: get marks for a specific username */
-  getByStudent(username: string): StudentMark[] {
-    return marks.filter(
-      (m) => m.studentUsername.toLowerCase() === username.toLowerCase()
-    );
+  async getByStudent(username: string): Promise<StudentMark[]> {
+    const { data, error } = await supabase
+      .from("student_marks")
+      .select("*")
+      .ilike("student_username", username);
+    
+    if (error || !data) return [];
+    return data.map(mapMark);
   },
 
-  /** Filter helpers for Admin */
-  filter(opts: {
+  async filter(opts: {
     department?: string;
     sem?: string;
     section?: string;
     subject?: string;
     testType?: StudentMark["testType"];
-  }): StudentMark[] {
-    return marks.filter((m) => {
-      if (opts.department && m.department !== opts.department) return false;
-      if (opts.sem && m.sem !== opts.sem) return false;
-      if (opts.section && m.section !== opts.section) return false;
-      if (opts.subject && m.subject !== opts.subject) return false;
-      if (opts.testType && m.testType !== opts.testType) return false;
-      return true;
-    });
+  }): Promise<StudentMark[]> {
+    let query = supabase.from("student_marks").select("*");
+    
+    if (opts.department) query = query.eq("department", opts.department);
+    if (opts.sem) query = query.eq("sem", opts.sem);
+    if (opts.section) query = query.eq("section", opts.section);
+    if (opts.subject) query = query.eq("subject", opts.subject);
+    if (opts.testType) query = query.eq("test_type", opts.testType);
+
+    const { data, error } = await query;
+    if (error || !data) return [];
+    return data.map(mapMark);
   },
 
-  /** Add multiple marks (bulk import or single record) */
-  addMarks(incoming: Omit<StudentMark, "id">[]): number {
-    const newMarks: StudentMark[] = incoming.map((m, i) => ({
-      ...m,
+  async addMarks(incoming: Omit<StudentMark, "id">[]): Promise<number> {
+    const newMarks = incoming.map((m, i) => ({
       id: `mark-${Date.now()}-${i}-${Math.floor(Math.random() * 1000)}`,
+      student_username: m.studentUsername,
+      student_name: m.studentName,
+      department: m.department,
+      sem: m.sem,
+      section: m.section,
+      subject: m.subject,
+      test_type: m.testType,
+      score: m.score,
+      date: m.date,
+      notes: m.notes || null,
     }));
-    marks = [...marks, ...newMarks];
-    save(marks);
+
+    const { error } = await supabase.from("student_marks").insert(newMarks);
+    if (error) return 0;
+    
     emit();
     return newMarks.length;
   },
 
-  /** Add a single mark (used when a student completes an exam) */
-  addMark(m: Omit<StudentMark, "id">): void {
-    marks = [
-      { ...m, id: `mark-${Date.now()}-${Math.floor(Math.random() * 1000)}` },
-      ...marks,
-    ];
-    save(marks);
+  async addMark(m: Omit<StudentMark, "id">): Promise<{ ok: boolean; error?: string }> {
+    const newMarkId = `mark-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const { error } = await supabase.from("student_marks").insert([{
+      id: newMarkId,
+      student_username: m.studentUsername,
+      student_name: m.studentName,
+      department: m.department,
+      sem: m.sem,
+      section: m.section,
+      subject: m.subject,
+      test_type: m.testType,
+      score: m.score,
+      date: m.date,
+      notes: m.notes || null,
+    }]);
+
+    if (error) return { ok: false, error: error.message };
     emit();
+    return { ok: true };
   },
 
-  /** Admin: delete a specific mark record */
-  deleteMark(id: string): void {
-    marks = marks.filter((m) => m.id !== id);
-    save(marks);
+  async deleteMark(id: string): Promise<{ ok: boolean; error?: string }> {
+    const { error } = await supabase.from("student_marks").delete().eq("id", id);
+    if (error) return { ok: false, error: error.message };
     emit();
+    return { ok: true };
   },
 
-  /** Admin: clear all imported marks */
-  clearImported(): void {
-    marks = marks.filter((m) => m.testType !== "imported");
-    save(marks);
+  async clearImported(): Promise<{ ok: boolean; error?: string }> {
+    const { error } = await supabase.from("student_marks").delete().eq("test_type", "imported");
+    if (error) return { ok: false, error: error.message };
     emit();
+    return { ok: true };
   },
 
-  /** Parse an Excel row into a StudentMark (used by Admin import UI) */
   parseRow(row: Record<string, unknown>): Omit<StudentMark, "id"> | null {
     const get = (keys: string[]): string => {
       for (const k of keys) {

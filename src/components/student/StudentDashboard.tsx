@@ -1,4 +1,5 @@
 import { useState, useSyncExternalStore } from "react";
+import { useStoreAsync } from "@/hooks/useStoreAsync";
 import {
   BookOpen, FileText, Lock, BarChart2, ChevronDown,
   LogOut, GraduationCap, Target, Clock, Award, BookMarked,
@@ -17,6 +18,7 @@ import { marksStore } from "@/services/marksStore";
 import { departmentStore } from "@/services/departmentStore";
 import type { AppUser } from "@/utils/userStore";
 import { toast } from "sonner";
+import { GENERATED_SUBJECTS } from "@/utils/generatedData";
 
 type View = "dashboard" | "lecture-notes" | "flashcards" | "notes" | "practice" | "dt-exam";
 
@@ -26,16 +28,16 @@ export function StudentDashboard({ user, onLogout }: { user: AppUser; onLogout: 
   const [selectedModule, setSelectedModule] = useState("");
   const dtLaunched = useSyncExternalStore((cb) => subscribeDt(cb), getDtLaunched, getDtLaunched);
 
-  const allQuestions = useSyncExternalStore(
+  const allQuestions = useStoreAsync(
     questionStore.subscribe,
     questionStore.getQuestions,
-    questionStore.getQuestions,
+    []
   );
 
-  const assignments = useSyncExternalStore(
+  const assignments = useStoreAsync(
     departmentStore.subscribe,
     departmentStore.getAssignments,
-    departmentStore.getAssignments
+    []
   );
 
   const studentAssignments = assignments.filter(a => 
@@ -45,27 +47,33 @@ export function StudentDashboard({ user, onLogout }: { user: AppUser; onLogout: 
   );
   const assignedSubjects = Array.from(new Set(studentAssignments.map(a => a.subject)));
 
-  const allSubjects = Array.from(new Set(allQuestions.map(q => q.subject || q.course || ""))).filter(Boolean);
-  
-  // Only show subjects assigned to the student's section. Fallback to all if no assignments exist.
+  // Use GENERATED_SUBJECTS to find relevant subjects for the student's branch
+  const userDept = user.department;
+  const branchSubjects = GENERATED_SUBJECTS
+    .filter(s => !userDept || s.department === userDept)
+    .map(s => s.name);
+    
+  const dbSubjects = Array.from(new Set(allQuestions.map(q => q.subject || q.course || ""))).filter(Boolean);
   const availableCourses = assignedSubjects.length > 0 
     ? assignedSubjects 
-    : (allSubjects.length > 0 ? allSubjects : COURSES);
+    : Array.from(new Set([...(branchSubjects.length > 0 ? branchSubjects : COURSES), ...dbSubjects]));
     
   const activeCourse = selectedCourse || availableCourses[0] || "";
 
   const courseQuestions = allQuestions.filter(
     q => (q.subject || q.course || "") === activeCourse
   );
-  const modules = Array.from(new Set(courseQuestions.map(q => String(q.module)))).sort((a, b) => {
-    const na = Number(a), nb = Number(b);
-    if (!isNaN(na) && !isNaN(nb)) return na - nb;
-    return a.localeCompare(b);
-  });
+  
+  // Always show all 5 modules by default so students can view the structure even without questions
+  const modules = ["1", "2", "3", "4", "5"];
   const activeModule = selectedModule || modules[0] || "";
 
   const filteredCards = activeModule
-    ? courseQuestions.filter(q => String(q.module) === activeModule)
+    ? courseQuestions.filter(q => {
+        const modStr = String(q.module).toLowerCase().replace(/[^a-z0-9]/g, '');
+        const activeModStr = activeModule.toLowerCase().replace(/[^a-z0-9]/g, '');
+        return modStr === activeModStr || modStr === `module${activeModStr}` || modStr === `m${activeModStr}` || modStr === `mod${activeModStr}`;
+      })
     : courseQuestions;
 
   // Exam state
@@ -74,10 +82,10 @@ export function StudentDashboard({ user, onLogout }: { user: AppUser; onLogout: 
   const [examQuestions, setExamQuestions] = useState(allQuestions.slice(0, 10));
   const [examCourse, setExamCourse] = useState("");
 
-  const history = useSyncExternalStore(
+  const history = useStoreAsync(
     examHistory.subscribe,
-    examHistory.getRecords,
-    examHistory.getRecords,
+    () => examHistory.getRecords(user.id),
+    []
   );
 
   const startDTExam = (questions: Question[], course: string) => {
@@ -93,8 +101,8 @@ export function StudentDashboard({ user, onLogout }: { user: AppUser; onLogout: 
       <ExamMode
         questions={examQuestions}
         title={`DT Exam — ${examCourse || activeCourse}`}
-        onFinish={(r: ExamResult[], meta: ExamFinishMeta) => {
-          examHistory.addRecord({
+        onFinish={async (r: ExamResult[], meta: ExamFinishMeta) => {
+          await examHistory.addRecord(user.id, {
             type: "dt",
             course: examCourse || activeCourse,
             startedAt: meta.startedAt,
@@ -104,8 +112,9 @@ export function StudentDashboard({ user, onLogout }: { user: AppUser; onLogout: 
             score: r.length > 0 ? Math.round(r.reduce((s, x) => s + x.match, 0) / r.length) : 0,
             results: r,
           });
-          setExamResults(r);
-          setExamStage("done");
+          setExamStage("idle");
+          setView("dashboard");
+          toast.success("Exam submitted successfully!");
         }}
         onCancel={() => { setExamStage("idle"); setView("dashboard"); }}
       />
@@ -113,12 +122,6 @@ export function StudentDashboard({ user, onLogout }: { user: AppUser; onLogout: 
   }
 
   const sidebarNav = [
-    {
-      section: "MAIN CONTENT",
-      items: [
-        { key: "lecture-notes" as View, label: "Lecture Notes", icon: BookOpen },
-      ],
-    },
     {
       section: "INTERACTIVE",
       items: [
@@ -235,14 +238,6 @@ export function StudentDashboard({ user, onLogout }: { user: AppUser; onLogout: 
             history={history}
           />
         )}
-        {view === "lecture-notes" && (
-          <ContentView title="Lecture Notes" subtitle={`${activeCourse} · Module ${activeModule}`}>
-            <div className="flex flex-col items-center justify-center py-24 text-muted-foreground">
-              <BookOpen className="w-12 h-12 mb-4 opacity-40" />
-              <p className="text-sm">Lecture notes will appear here once uploaded by faculty.</p>
-            </div>
-          </ContentView>
-        )}
 
         {view === "flashcards" && (
           <ContentView
@@ -254,28 +249,10 @@ export function StudentDashboard({ user, onLogout }: { user: AppUser; onLogout: 
         )}
         {view === "practice" && (
           <ContentView title="Practice Questions" subtitle="Self-paced quiz or join a faculty test by code">
-            <PracticeTest />
+            <PracticeTest user={user} />
           </ContentView>
         )}
-        {view === "dt-exam" && examStage === "done" && (
-          <ContentView title="DT Exam — Submitted" subtitle="Your results have been recorded">
-            <div className="max-w-md">
-              <div className="bg-card border border-border rounded-xl p-8 text-center">
-                <Award className="w-12 h-12 text-primary mx-auto mb-4" />
-                <p className="text-muted-foreground text-sm mb-1">Final Score</p>
-                <p className="font-mono text-5xl font-bold text-primary mt-1">
-                  {Math.round(examResults.reduce((s, r) => s + r.match, 0) / examResults.length)}%
-                </p>
-                <button
-                  onClick={() => { setExamStage("idle"); setView("dashboard"); }}
-                  className="mt-6 px-6 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:bg-primary/90 transition-colors"
-                >
-                  Back to Dashboard
-                </button>
-              </div>
-            </div>
-          </ContentView>
-        )}
+        {/* Results view removed: directly redirecting to dashboard */}
         {view === "dt-exam" && examStage === "idle" && (
           <ContentView title="DT Exam" subtitle="Enter a secret code or use the admin-launched exam">
             <DTExamPrompt
@@ -337,7 +314,7 @@ function DashboardView({
   user, allQuestions, dtLaunched, onStartExam, onGoFlashcards, onGoPractice, history,
 }: {
   user: AppUser;
-  allQuestions: ReturnType<typeof questionStore.getQuestions>;
+  allQuestions: Question[];
   dtLaunched: boolean;
   onStartExam: () => void;
   onGoFlashcards: () => void;
@@ -509,8 +486,7 @@ function DTExamPrompt({
   user: AppUser;
   onStart: (questions: Question[], course: string) => void;
 }) {
-  const tests = useSyncExternalStore(dtTestStore.subscribe, dtTestStore.getTests, dtTestStore.getTests);
-  const activeExams = dtTestStore.getActiveTestsForStudent(user.department || "", user.sem || "");
+  const activeExams = useStoreAsync(dtTestStore.subscribe, () => dtTestStore.getActiveTestsForStudent(user.department || "", user.sem || ""), []);
 
   return (
     <div className="max-w-xl space-y-5">

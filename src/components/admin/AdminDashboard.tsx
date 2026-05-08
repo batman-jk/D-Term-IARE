@@ -1,4 +1,5 @@
-import { useState, useSyncExternalStore, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+import { useStoreAsync } from "@/hooks/useStoreAsync";
 import {
   Home, Database, ToggleRight, Trophy, Users, FileUp, Plus,
   Pencil, Trash2, Check, X, KeyRound, BarChart2, Loader2,
@@ -6,7 +7,6 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { Sidebar } from "@/components/Sidebar";
-import { MOCK_ALL_RESULTS, QUESTIONS, COURSES } from "@/utils/mockData";
 import { getDtLaunched, setDtLaunched, subscribeDt } from "@/utils/examStore";
 import { userStore, type AppUser, type UserRole } from "@/utils/userStore";
 import { questionStore } from "@/utils/questionStore";
@@ -35,6 +35,11 @@ export function AdminDashboard({
 }) {
   const [tab, setTab] = useState("home");
 
+  // Real data for stats
+  const allUsers = useStoreAsync(userStore.subscribe, userStore.getUsers, []);
+  const allQuestions = useStoreAsync(questionStore.subscribe, questionStore.getQuestions, []);
+  const allExams = useStoreAsync(dtTestStore.subscribe, dtTestStore.getTests, []);
+
   return (
     <div className="min-h-screen flex bg-background">
       <Sidebar
@@ -46,7 +51,14 @@ export function AdminDashboard({
         onLogout={onLogout}
       />
       <main className="flex-1 p-8 overflow-auto">
-        {tab === "home" && <HomeTab />}
+        {tab === "home" && (
+          <HomeTab 
+            userCount={allUsers.length} 
+            facultyCount={allUsers.filter(u => u.role === "Faculty").length}
+            questionCount={allQuestions.length}
+            examCount={allExams.length}
+          />
+        )}
         {tab === "manage" && <ManageTab user={user} />}
         {tab === "marks" && <MarksTab />}
         {tab === "results" && <ResultsTab />}
@@ -57,16 +69,21 @@ export function AdminDashboard({
   );
 }
 
-function HomeTab() {
+function HomeTab({ userCount, facultyCount, questionCount, examCount }: { 
+  userCount: number; 
+  facultyCount: number; 
+  questionCount: number; 
+  examCount: number;
+}) {
   return (
     <div>
       <h1 className="font-mono text-3xl text-foreground">Admin Console</h1>
       <p className="text-sm text-muted-foreground mt-1">Platform-wide controls and analytics.</p>
-      <div className="grid grid-cols-4 gap-4 mt-6 max-w-4xl">
-        <Stat label="Total Users" value="142" />
-        <Stat label="Active Faculty" value="18" />
-        <Stat label="Question Bank" value={`${QUESTIONS.length}`} />
-        <Stat label="DT Exams Run" value="3" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6 max-w-5xl">
+        <Stat label="Total Users" value={String(userCount)} />
+        <Stat label="Active Faculty" value={String(facultyCount)} />
+        <Stat label="Question Bank" value={String(questionCount)} />
+        <Stat label="DT Exams Run" value={String(examCount)} />
       </div>
     </div>
   );
@@ -82,7 +99,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 function ManageTab({ user }: { user: AppUser }) {
-  const tests = useSyncExternalStore(dtTestStore.subscribe, dtTestStore.getTests, dtTestStore.getTests);
+  const tests = useStoreAsync(dtTestStore.subscribe, dtTestStore.getTests, []);
   const [showForm, setShowForm] = useState(false);
 
   const [department, setDepartment] = useState(DEPARTMENTS[0]);
@@ -91,42 +108,68 @@ function ManageTab({ user }: { user: AppUser }) {
   const [module, setModule] = useState("");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
+  const [subjectSearch, setSubjectSearch] = useState("");
+  const [showSubjectDropdown, setShowSubjectDropdown] = useState(false);
+  const subjectDropdownRef = useRef<HTMLDivElement>(null);
 
-  const allQuestions = questionStore.getQuestions();
-  
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (subjectDropdownRef.current && !subjectDropdownRef.current.contains(event.target as Node)) {
+        setShowSubjectDropdown(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const allQuestions = useStoreAsync(questionStore.subscribe, questionStore.getQuestions, []);
+
   // Filter assignments matching dept and sem
-  const availableSubjects = departmentStore.getAssignments()
+  const availableSubjects = useStoreAsync(departmentStore.subscribe, departmentStore.getAssignments, [])
     .filter(a => a.department === department && a.semester === semester)
     .map(a => a.subject);
   const uniqueSubjects = Array.from(new Set(availableSubjects));
 
+  const subjectsWithQuestions = Array.from(new Set(allQuestions.map(q => q.subject || q.course || ""))).filter(Boolean);
+  const allGeneratedSubjects = Array.from(new Set(GENERATED_SUBJECTS.map(s => s.name)));
+
+  const allPossibleSubjects = Array.from(new Set([
+    ...uniqueSubjects,
+    ...subjectsWithQuestions,
+    ...allGeneratedSubjects
+  ])).sort();
+
+  const filteredSubjects = subjectSearch
+    ? allPossibleSubjects.filter(s => s.toLowerCase().includes(subjectSearch.toLowerCase()))
+    : allPossibleSubjects;
+
   const subjectQuestions = allQuestions.filter(q => (q.subject || q.course || "") === subject);
   const availableModules = Array.from(new Set(subjectQuestions.map(q => String(q.module)))).sort();
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!subject) { toast.error("Please select a subject."); return; }
     if (!start || !end) { toast.error("Please provide start and end times."); return; }
     if (new Date(start) >= new Date(end)) { toast.error("End time must be after start time."); return; }
-    
+
     const qs = module ? subjectQuestions.filter(q => String(q.module) === module) : subjectQuestions;
     if (qs.length === 0) { toast.error("No questions found for this subject/module. Upload questions first."); return; }
-    
+
     const sTime = new Date(start);
     const eTime = new Date(end);
     const calculatedDuration = Math.round((eTime.getTime() - sTime.getTime()) / 60000);
 
-    dtTestStore.createTest({ 
+    await dtTestStore.createTest({
       department,
       semester,
-      subject, 
-      module: module || "All", 
+      subject,
+      module: module || "All",
       startTime: start,
       endTime: end,
-      duration: calculatedDuration, 
-      questions: qs, 
-      createdBy: user.displayName 
+      duration: calculatedDuration,
+      questions: qs,
+      createdBy: user.displayName
     });
-    
+
     toast.success("DT Exam scheduled successfully!");
     setShowForm(false);
     setModule("");
@@ -178,16 +221,56 @@ function ManageTab({ user }: { user: AppUser }) {
                   <ChevronDown className="absolute right-2 top-2.5 w-4 h-4 text-muted-foreground pointer-events-none" />
                 </div>
               </div>
-              <div>
+              <div className="relative" ref={subjectDropdownRef}>
                 <label className="block text-xs uppercase tracking-widest text-muted-foreground mb-1">Subject</label>
                 <div className="relative">
-                  <select value={subject} onChange={e => { setSubject(e.target.value); setModule(""); }}
-                    className="w-full appearance-none bg-input border border-border rounded px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary pr-8">
-                    <option value="">Select Subject...</option>
-                    {uniqueSubjects.map(s => <option key={s}>{s}</option>)}
-                  </select>
+                  <input
+                    type="text"
+                    value={subject || subjectSearch}
+                    onChange={(e) => {
+                      setSubjectSearch(e.target.value);
+                      if (subject) setSubject(""); // Clear selection if typing
+                      setShowSubjectDropdown(true);
+                    }}
+                    onFocus={() => setShowSubjectDropdown(true)}
+                    placeholder="Search or select subject..."
+                    className="w-full bg-input border border-border rounded px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary pr-8"
+                  />
                   <ChevronDown className="absolute right-2 top-2.5 w-4 h-4 text-muted-foreground pointer-events-none" />
                 </div>
+
+                {showSubjectDropdown && (
+                  <div className="absolute z-50 w-full mt-1 bg-card border border-border rounded-lg shadow-xl max-h-60 overflow-y-auto custom-scrollbar">
+                    {filteredSubjects.length === 0 ? (
+                      <div className="p-3 text-xs text-muted-foreground text-center italic">No subjects found</div>
+                    ) : (
+                      <div className="py-1">
+                        {filteredSubjects.map((s) => {
+                          const isAssigned = uniqueSubjects.includes(s);
+                          const hasQuestions = subjectsWithQuestions.includes(s);
+                          return (
+                            <button
+                              key={s}
+                              onClick={() => {
+                                setSubject(s);
+                                setSubjectSearch("");
+                                setShowSubjectDropdown(false);
+                                setModule("");
+                              }}
+                              className={`w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors flex flex-col gap-0.5 ${subject === s ? 'bg-primary/10 text-primary font-semibold' : 'text-foreground'}`}
+                            >
+                              <span>{s}</span>
+                              <div className="flex gap-2">
+                                {isAssigned && <span className="text-[9px] uppercase tracking-tighter bg-blue-500/10 text-blue-500 px-1 rounded">Assigned</span>}
+                                {hasQuestions && <span className="text-[9px] uppercase tracking-tighter bg-green-500/10 text-green-500 px-1 rounded">Has Questions</span>}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-xs uppercase tracking-widest text-muted-foreground mb-1">Module (blank = all)</label>
@@ -253,7 +336,7 @@ function ManageTab({ user }: { user: AppUser }) {
                 const eTime = new Date(t.endTime);
                 let status = "Upcoming";
                 let statusColor = "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20";
-                
+
                 if (now > eTime) {
                   status = "Completed";
                   statusColor = "bg-muted text-muted-foreground border-border";
@@ -270,7 +353,7 @@ function ManageTab({ user }: { user: AppUser }) {
                       <div className="text-xs text-muted-foreground">Mod: {t.module} ({t.questions.length} qs)</div>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground text-xs font-mono">
-                      {sTime.toLocaleString()} <br/>to {eTime.toLocaleString()}
+                      {sTime.toLocaleString()} <br />to {eTime.toLocaleString()}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{t.duration}m</td>
                     <td className="px-4 py-3">
@@ -279,7 +362,7 @@ function ManageTab({ user }: { user: AppUser }) {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button onClick={() => { dtTestStore.deleteTest(t.id); toast.success("Scheduled exam deleted."); }}
+                      <button onClick={async () => { await dtTestStore.deleteTest(t.id); toast.success("Scheduled exam deleted."); }}
                         className="opacity-0 group-hover/row:opacity-100 flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors ml-auto">
                         <Trash2 className="w-3.5 h-3.5" /> Delete
                       </button>
@@ -296,13 +379,17 @@ function ManageTab({ user }: { user: AppUser }) {
 }
 
 function ResultsTab() {
+  const marks = useStoreAsync(marksStore.subscribe, marksStore.getAll, []);
   const [filter, setFilter] = useState("");
-  const filtered = filter ? MOCK_ALL_RESULTS.filter((r) => r.course === filter) : MOCK_ALL_RESULTS;
+  
+  const subjects = Array.from(new Set(marks.map(m => m.subject))).filter(Boolean).sort();
+  const filtered = filter ? marks.filter((m) => m.subject === filter) : marks;
+
   return (
     <div>
       <h1 className="font-mono text-3xl text-foreground">All Results</h1>
       <p className="text-sm text-muted-foreground mt-1 mb-6">
-        DT and practice scores across all students.
+        Live DT and practice scores across all students.
       </p>
       <div className="mb-4 max-w-xs">
         <select
@@ -310,33 +397,44 @@ function ResultsTab() {
           onChange={(e) => setFilter(e.target.value)}
           className="w-full bg-input border border-border rounded px-3 py-2 text-sm focus:outline-none focus:border-primary"
         >
-          <option value="">All Courses</option>
-          {COURSES.map((c) => (
-            <option key={c}>{c}</option>
+          <option value="">All Subjects</option>
+          {subjects.map((s) => (
+            <option key={s} value={s}>{s}</option>
           ))}
         </select>
       </div>
-      <div className="border border-border bg-card rounded overflow-hidden">
+      <div className="border border-border bg-card rounded-xl overflow-hidden max-w-5xl">
         <table className="w-full text-sm">
           <thead className="bg-muted">
             <tr className="text-left text-xs uppercase tracking-widest text-muted-foreground">
               <th className="px-4 py-3">Student</th>
-              <th className="px-4 py-3">Course</th>
-              <th className="px-4 py-3">DT Score</th>
-              <th className="px-4 py-3">Practice Scores</th>
+              <th className="px-4 py-3">Subject</th>
+              <th className="px-4 py-3">Type</th>
+              <th className="px-4 py-3">Score</th>
               <th className="px-4 py-3">Date</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((r, i) => (
-              <tr key={i} className="border-t border-border">
-                <td className="px-4 py-3">{r.student}</td>
-                <td className="px-4 py-3">{r.course}</td>
-                <td className="px-4 py-3 font-mono text-primary">{r.dt > 0 ? `${r.dt}%` : "—"}</td>
-                <td className="px-4 py-3 font-mono text-muted-foreground">{r.practice}</td>
-                <td className="px-4 py-3 text-muted-foreground">{r.date}</td>
-              </tr>
-            ))}
+            {filtered.length === 0 ? (
+              <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">No results found matching your filter.</td></tr>
+            ) : (
+              filtered.map((r, i) => (
+                <tr key={r.id || i} className="border-t border-border hover:bg-muted/40 transition-colors">
+                  <td className="px-4 py-3">
+                    <div className="font-semibold">{r.studentName}</div>
+                    <div className="text-[10px] font-mono text-muted-foreground">{r.studentUsername}</div>
+                  </td>
+                  <td className="px-4 py-3">{r.subject || "—"}</td>
+                  <td className="px-4 py-3">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-muted/50 uppercase">
+                      {r.testType}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 font-mono font-bold text-primary">{r.score}%</td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs">{r.date}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -345,7 +443,7 @@ function ResultsTab() {
 }
 
 function UsersTab() {
-  const users = useSyncExternalStore(userStore.subscribe, userStore.getUsers, userStore.getUsers);
+  const users = useStoreAsync(userStore.subscribe, userStore.getUsers, []);
 
   // Tabs: Admin, Faculty, Student
   const [activeTab, setActiveTab] = useState<UserRole>("Student");
@@ -355,7 +453,7 @@ function UsersTab() {
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
-  
+
   // Faculty & Student extra fields
   const [newDepartment, setNewDepartment] = useState(DEPARTMENTS[0]);
   const [newSem, setNewSem] = useState(SEMESTERS[0]);
@@ -382,7 +480,7 @@ function UsersTab() {
       section: (activeTab === "Student" || activeTab === "Faculty") ? newSection.trim() : undefined,
       subject: activeTab === "Faculty" ? newSubject.trim() : undefined,
     });
-    
+
     if (result.ok) {
       toast.success(`User "${newUsername.trim()}" created as ${activeTab}.`);
       setNewUsername("");
@@ -433,11 +531,10 @@ function UsersTab() {
           <button
             key={role}
             onClick={() => { setActiveTab(role); setShowCreate(false); }}
-            className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
-              activeTab === role 
-                ? "border-primary text-primary bg-primary/5" 
+            className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${activeTab === role
+                ? "border-primary text-primary bg-primary/5"
                 : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50"
-            }`}
+              }`}
           >
             {role}s ({users.filter(u => u.role === role).length})
           </button>
@@ -544,7 +641,7 @@ function UsersTab() {
               <tr key={u.id} className="border-t border-border group/row hover:bg-muted/40 transition-colors">
                 <td className="px-4 py-3 font-semibold text-foreground">{u.displayName}</td>
                 <td className="px-4 py-3 font-mono text-muted-foreground">{u.username}</td>
-                
+
                 {activeTab !== "Admin" && (
                   <td className="px-4 py-3">
                     <div className="text-[10px] text-muted-foreground uppercase tracking-widest leading-relaxed">
@@ -601,10 +698,10 @@ function UsersTab() {
 // MARKS TAB — Admin-only student marks + Excel export
 // ═══════════════════════════════════════════════════════════════════════════
 function MarksTab() {
-  const marks = useSyncExternalStore(
+  const marks = useStoreAsync(
     marksStore.subscribe,
     marksStore.getAll,
-    marksStore.getAll,
+    []
   );
 
   const [filterDept, setFilterDept] = useState("");
@@ -742,13 +839,12 @@ function MarksTab() {
                   </td>
                   <td className="px-4 py-3 text-foreground">{m.subject || "—"}</td>
                   <td className="px-4 py-3">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                      m.testType === "dt"
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${m.testType === "dt"
                         ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
                         : m.testType === "practice"
-                        ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20"
-                        : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
-                    }`}>
+                          ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20"
+                          : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                      }`}>
                       {m.testType === "dt" ? "DT" : m.testType === "practice" ? "PRACTICE" : "IMPORTED"}
                     </span>
                   </td>
@@ -765,14 +861,14 @@ function MarksTab() {
 }
 
 function DepartmentsTab() {
-  const assignments = useSyncExternalStore(departmentStore.subscribe, departmentStore.getAssignments, departmentStore.getAssignments);
-  const users = useSyncExternalStore(userStore.subscribe, userStore.getUsers, userStore.getUsers);
+  const assignments = useStoreAsync(departmentStore.subscribe, departmentStore.getAssignments, []);
+  const users = useStoreAsync(userStore.subscribe, userStore.getUsers, []);
   const faculties = users.filter(u => u.role === "Faculty");
 
   const [editingId, setEditingId] = useState<string | null>(null); // "new" for create, ID for edit
   const [filterDept, setFilterDept] = useState("");
   const [filterReg, setFilterReg] = useState("");
-  
+
   const [department, setDepartment] = useState(DEPARTMENTS[0]);
   const [semester, setSemester] = useState(SEMESTERS[0]);
   const [regulation, setRegulation] = useState(REGULATIONS[0]);
@@ -780,8 +876,8 @@ function DepartmentsTab() {
   const [subject, setSubject] = useState("");
   const [facultyId, setFacultyId] = useState("");
 
-  const filteredAssignments = assignments.filter(a => 
-    (!filterDept || a.department === filterDept) && 
+  const filteredAssignments = assignments.filter(a =>
+    (!filterDept || a.department === filterDept) &&
     (!filterReg || a.regulation === filterReg)
   );
 
@@ -809,12 +905,12 @@ function DepartmentsTab() {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!department || !semester || !section || !subject || !facultyId) {
       toast.error("Please fill in all fields.");
       return;
     }
-    
+
     const actualFacultyId = facultyId.split(' - ')[0].trim();
 
     const payload = {
@@ -828,9 +924,9 @@ function DepartmentsTab() {
 
     let result;
     if (editingId === "new") {
-      result = departmentStore.addAssignment(payload);
+      result = await departmentStore.addAssignment(payload);
     } else if (editingId) {
-      result = departmentStore.updateAssignment(editingId, payload);
+      result = await departmentStore.updateAssignment(editingId, payload);
     }
 
     if (result?.ok) {
@@ -1009,7 +1105,7 @@ function DepartmentsTab() {
                       <button onClick={() => openForm(a.id)} className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-primary hover:bg-primary/10">
                         <Pencil className="w-3.5 h-3.5" /> Edit
                       </button>
-                      <button onClick={() => { departmentStore.deleteAssignment(a.id); toast.success("Deleted"); }} className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10">
+                      <button onClick={async () => { await departmentStore.deleteAssignment(a.id); toast.success("Deleted"); }} className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10">
                         <Trash2 className="w-3.5 h-3.5" /> Delete
                       </button>
                     </div>

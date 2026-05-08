@@ -1,12 +1,12 @@
 /**
- * geminiService.ts
+ * mistralService.ts
  * ─────────────────────────────────────────────────────────────────────────
- * Wrapper around the Gemini API for flashcard + notes generation.
- * Uses VITE_GEMINI_API_KEY from environment variables.
+ * Wrapper around the Mistral API for flashcard + notes generation.
+ * Uses VITE_MISTRAL_API_KEY from environment variables.
  * Falls back gracefully when the key is not yet configured.
  */
 
-export interface GeminiFlashcard {
+export interface MistralFlashcard {
   id?: string;
   question: string;
   answer: string;
@@ -14,7 +14,7 @@ export interface GeminiFlashcard {
   keywords: string[];
 }
 
-export interface GeminiNotes {
+export interface MistralNotes {
   overview: string;
   concepts: { term: string; definition: string; importance: string }[];
   explanations: { concept: string; explanation: string; example: string }[];
@@ -24,59 +24,59 @@ export interface GeminiNotes {
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
-const GEMINI_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
+const API_KEY = import.meta.env.VITE_MISTRAL_API_KEY as string | undefined;
+const AGENT_ID = import.meta.env.VITE_MISTRAL_AGENT_ID as string | undefined;
+const MISTRAL_URL = AGENT_ID
+  ? "https://api.mistral.ai/v1/agents/completions"
+  : "https://api.mistral.ai/v1/chat/completions";
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
 
 // ── Cache (session) ───────────────────────────────────────────────────────
-const flashcardCache = new Map<string, GeminiFlashcard[]>();
-const notesCache = new Map<string, GeminiNotes>();
+const flashcardCache = new Map<string, MistralFlashcard[]>();
+const notesCache = new Map<string, MistralNotes>();
 
 function cacheKey(subject: string, module: string) {
   return `${subject.toLowerCase()}::${module.toLowerCase()}`;
 }
 
 // ── Core fetch helper with retry ──────────────────────────────────────────
-async function callGemini(prompt: string, attempt = 1): Promise<string> {
+async function callMistral(prompt: string, attempt = 1): Promise<string> {
   if (!API_KEY) {
-    throw new Error("VITE_GEMINI_API_KEY is not configured. Add it to your .env file.");
+    throw new Error("VITE_MISTRAL_API_KEY is not configured. Add it to your .env.local file.");
   }
 
   try {
-    const res = await fetch(`${GEMINI_URL}?key=${API_KEY}`, {
+    const res = await fetch(MISTRAL_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${API_KEY}`
+      },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.7,
-          topK: 40,
-          topP: 0.95,
-          maxOutputTokens: 8192,
-          responseMimeType: "application/json",
-        },
+        ...(AGENT_ID ? { agent_id: AGENT_ID } : { model: "mistral-small-latest", temperature: 0.7 }),
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" }
       }),
     });
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(
-        `Gemini API error ${res.status}: ${(err as { error?: { message?: string } }).error?.message ?? res.statusText}`
+        `Mistral API error ${res.status}: ${(err as { error?: { message?: string } }).error?.message ?? res.statusText}`
       );
     }
 
     const data = (await res.json()) as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
+      choices?: { message?: { content?: string } }[];
     };
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-    if (!text) throw new Error("Empty response from Gemini");
+    const text = data.choices?.[0]?.message?.content ?? "";
+    if (!text) throw new Error("Empty response from Mistral");
     return text;
   } catch (err) {
     if (attempt < MAX_RETRIES) {
       await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
-      return callGemini(prompt, attempt + 1);
+      return callMistral(prompt, attempt + 1);
     }
     throw err;
   }
@@ -101,30 +101,31 @@ Each flashcard must have:
 
 Distribute difficulty approximately: 40% EASY, 40% MEDIUM, 20% HARD.
 Cover different sub-topics within the module — avoid duplicates.
-Return ONLY a valid JSON array. No markdown, no explanation, no extra keys.
-Format: [{"question":"...","answer":"...","difficulty":"EASY","keywords":["..."]}]
+Return ONLY a valid JSON object with a single key "flashcards" containing the array of flashcards. No markdown, no explanation.
+Format: {"flashcards": [{"question":"...","answer":"...","difficulty":"EASY","keywords":["..."]}]}
 `;
 
 export async function generateFlashcards(
   subject: string,
   module: string,
   count = 50
-): Promise<GeminiFlashcard[]> {
+): Promise<MistralFlashcard[]> {
   const key = `${cacheKey(subject, module)}::${count}`;
   const cached = flashcardCache.get(key);
   if (cached) return cached;
 
-  const raw = await callGemini(FLASHCARD_PROMPT(subject, module, count));
-  const parsed = safeParseJSON<GeminiFlashcard[]>(raw);
+  const raw = await callMistral(FLASHCARD_PROMPT(subject, module, count));
+  const parsedObj = safeParseJSON<{ flashcards?: MistralFlashcard[] }>(raw);
+  const parsed = parsedObj.flashcards || [];
 
-  if (!Array.isArray(parsed)) throw new Error("Gemini returned non-array for flashcards");
+  if (!Array.isArray(parsed)) throw new Error("Mistral returned non-array for flashcards");
 
   // Normalise difficulty values
   const normalised = parsed.map((c, i) => ({
     ...c,
     difficulty: (["EASY", "MEDIUM", "HARD"].includes(c.difficulty)
       ? c.difficulty
-      : "MEDIUM") as GeminiFlashcard["difficulty"],
+      : "MEDIUM") as MistralFlashcard["difficulty"],
     keywords: Array.isArray(c.keywords) ? c.keywords : [],
     question: c.question ?? "",
     answer: c.answer ?? "",
@@ -148,7 +149,7 @@ Structure the notes with these exact JSON keys:
   "explanations": [{"concept":"","explanation":"","example":""}],
   "definitions": [{"term":"","value":""}],
   "examQuestions": [{"q":"","a":""}],
-  "summary": ["bullet point 1", "bullet point 2", ...]
+  "summary": ["bullet point 1", "bullet point 2"]
 }
 
 Requirements:
@@ -158,13 +159,13 @@ Requirements:
 - examQuestions: 5 likely exam questions with brief model answers
 - summary: 10 key takeaways
 
-Return ONLY valid JSON — no markdown fences, no extra text.
+Return ONLY a valid JSON object matching the exact structure requested.
 `;
 
 export async function generateNotes(
   subject: string,
   module: string
-): Promise<GeminiNotes> {
+): Promise<MistralNotes> {
   const key = cacheKey(subject, module);
   const cached = notesCache.get(key);
   if (cached) return cached;
@@ -174,14 +175,14 @@ export async function generateNotes(
   try {
     const stored = localStorage.getItem(lsKey);
     if (stored) {
-      const parsed = JSON.parse(stored) as GeminiNotes;
+      const parsed = JSON.parse(stored) as MistralNotes;
       notesCache.set(key, parsed);
       return parsed;
     }
   } catch { /* ignore */ }
 
-  const raw = await callGemini(NOTES_PROMPT(subject, module));
-  const parsed = safeParseJSON<GeminiNotes>(raw);
+  const raw = await callMistral(NOTES_PROMPT(subject, module));
+  const parsed = safeParseJSON<MistralNotes>(raw);
 
   // Store to localStorage for future sessions
   try {
@@ -200,4 +201,49 @@ export function clearNotesCache(subject: string, module: string) {
   } catch { /* ignore */ }
 }
 
-export const geminiService = { generateFlashcards, generateNotes, clearNotesCache };
+// ── Spreadsheet Parsing ───────────────────────────────────────────────────
+export interface ParsedSpreadsheetRow {
+  question: string;
+  answer: string;
+  keywords: string[];
+}
+
+const PARSE_SPREADSHEET_PROMPT = `
+You are an expert data extractor. I will provide you with a JSON array representing rows from an uploaded spreadsheet (like Excel/CSV).
+Your task is to identify which column represents the "Question" (or term/concept), which represents the "Answer" (or definition/explanation), and extract them.
+If there is no "keywords" column, or if the keywords are empty, please automatically generate 3-5 relevant keywords based on the answer.
+
+Return ONLY a valid JSON object with a single key "questions" containing an array.
+Each object in the array MUST have exactly three keys: "question", "answer", and "keywords" (an array of strings).
+
+Example output:
+{
+  "questions": [
+    {
+      "question": "What is an API?",
+      "answer": "An Application Programming Interface allows two applications to talk to each other.",
+      "keywords": ["API", "Application", "Interface"]
+    }
+  ]
+}
+
+Here is the data:
+`;
+
+export async function parseSpreadsheet(data: any[]): Promise<ParsedSpreadsheetRow[]> {
+  // To avoid exceeding token limits, we stringify the array. If it's too huge, slice it?
+  // We'll pass up to 150 rows.
+  const sample = data.slice(0, 150);
+  const prompt = PARSE_SPREADSHEET_PROMPT + JSON.stringify(sample);
+
+  const raw = await callMistral(prompt);
+  const parsedObj = safeParseJSON<{ questions?: ParsedSpreadsheetRow[] }>(raw);
+  
+  if (!parsedObj.questions || !Array.isArray(parsedObj.questions)) {
+    throw new Error("Mistral failed to return an array of questions.");
+  }
+  
+  return parsedObj.questions.filter(q => q.question && q.answer);
+}
+
+export const mistralService = { generateFlashcards, generateNotes, clearNotesCache, parseSpreadsheet };
